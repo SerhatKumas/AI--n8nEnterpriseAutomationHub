@@ -1,0 +1,253 @@
+{
+  "name": "Escape Towns — WhatsApp AI Assistant",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "whatsapp-evolution",
+        "responseMode": "responseNode",
+        "options": {},
+        "authentication": "headerAuth"
+      },
+      "id": "webhook-evolution-post",
+      "name": "Webhook (Evolution API)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        200,
+        300
+      ],
+      "webhookId": "whatsapp-evolution",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "CONFIGURE_WEBHOOK_CREDENTIAL",
+          "name": "Escape Towns webhook"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"status\": \"RECEIVED\"\n}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-ack",
+      "name": "Acknowledge 200 OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Accept only incoming text/captions for the Escape Towns instance.\nconst body = $input.first().json.body ?? $input.first().json;\nconst data = body.data ?? {};\nconst key = data.key ?? {};\nconst message = data.message ?? {};\nif (body.event !== 'messages.upsert' || body.instance !== 'escapetowns') return [];\nif (key.fromMe !== false) return [];\nconst remoteJid = key.remoteJid ?? '';\nif (!/^[0-9]+@(s\\.whatsapp\\.net|lid)$/.test(remoteJid)) return [];\nconst messageText = message.conversation ?? message.extendedTextMessage?.text\n  ?? message.imageMessage?.caption ?? message.buttonsResponseMessage?.selectedDisplayText\n  ?? message.listResponseMessage?.title;\nif (typeof messageText !== 'string' || !messageText.trim()) return [];\nreturn [{ json: {\n  senderPhone: remoteJid.split('@')[0], remoteJid,\n  senderName: data.pushName || 'Customer', messageId: key.id,\n  messageText: messageText.trim(), isGroup: false, instance: 'escapetowns'\n} }];"
+      },
+      "id": "extract-filter-data",
+      "name": "Extract & Filter Message Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-not-group",
+              "leftValue": "={{ $json.isGroup }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "is-direct-message",
+      "name": "Is Direct 1-on-1 Message?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        920,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.messageText }}",
+        "options": {
+          "systemMessage": "=You are the friendly, professional, and knowledgeable AI educational advisor for Escape Towns (escapetowns.com).\n\n🏢 ABOUT ESCAPE TOWNS:\nEscape Towns is a boutique study, work, and career abroad consultancy dedicated to helping students and young professionals build international futures. We guide clients step-by-step from their first question to their first day abroad.\n- Track Record: 2,400+ students placed, 96% visa approval rate, 180+ partner universities.\n- Website: https://escapetowns.com\n- Free Consultation Booking: https://escapetowns.com/en/book\n- Program Finder Quiz: https://escapetowns.com/en/quiz\n\n🌍 CORE DESTINATIONS & PROGRAMS:\n1. GERMANY 🇩🇪:\n   - Master's Degrees: Postgraduate programs at top German universities (most public universities are tuition-free). Available in English and German.\n   - Bachelor's Degrees: Undergraduate programs with direct admission or Studienkolleg preparatory year. Full assistance with Uni-Assist, VPD, and applications.\n   - Ausbildung (Dual Vocational Training): Paid vocational training where students earn a monthly salary while learning in fields like IT, Nursing/Healthcare, Gastronomy, Tourism, and Logistics. Typically requires B1 or B2 German.\n   - Language Preparation: Guidance on German language requirements (Goethe, telc, TestDaF) from A1 to C1.\n2. UNITED STATES 🇺🇸:\n   - Work & Travel (WAT): Summer cultural exchange program for full-time university students. Work in seasonal positions (resorts, national parks, hotels) for up to 3-4 months, followed by a 30-day travel period across the USA. Includes J-1 visa sponsorship, employer matching, and embassy interview prep.\n\n🛠️ OUR SERVICES:\n- University & Program Matching: Finding institutions tailored to the student's GPA, budget, and language proficiency.\n- Visa & Bureaucracy Support: Guidance on German student/Ausbildung visas, US J-1 visas, blocked bank accounts (Sperrkonto via Coracle, Expatrio, Fintiba), and embassy appointments.\n- Document Polishing: CV/Resume, Motivation Letters, translation coordination, and transcript verification.\n- Accommodation & Pre-Departure: Dorms/WG search tips, health insurance, flight booking advice, packing lists, and local registration support.\n- Scholarships: Identifying eligible university or DAAD grants.\n\n💬 COMMUNICATION GUIDELINES:\n- Today's date is: {{ $now.format('YYYY-MM-DD') }}.\n- Greet {{ $('Extract & Filter Message Data').item.json.senderName }} warmly if this is the start of a conversation.\n- Language: ALWAYS reply in the exact language the user used (Turkish, English, or German).\n- Tone: Warm, encouraging, expert, and approachable (like an experienced advisor and older friend).\n- WhatsApp Formatting: Keep replies concise, readable, and well-structured using emojis, bullet points, and short paragraphs. Avoid dense walls of text.\n- Consultative Approach: Ask helpful qualification questions when appropriate (e.g., current education status, GPA, language levels like German A1-C1 or English, intended program or country).\n- Call-to-Action: When a student asks about getting started, eligibility, or detailed personalized evaluation, warmly invite them to book a free 1-on-1 consultation: https://escapetowns.com/en/book\n- Guardrails: Do not invent exact non-public consulting fees, specific salary promises, or guarantee 100% visa outcomes. Always invite them to discuss their specific profile in a free consultation."
+        }
+      },
+      "id": "ai-agent",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        1160,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-3.5-flash",
+        "options": {
+          "temperature": 0.7
+        }
+      },
+      "id": "gemini-chat-model",
+      "name": "Google Gemini Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        500
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "CONFIGURE_GEMINI_CREDENTIAL",
+          "name": "Google Gemini(PaLM) API account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('Extract & Filter Message Data').item.json.instance + ':' + $('Extract & Filter Message Data').item.json.remoteJid }}",
+        "contextWindowLength": 10
+      },
+      "id": "chat-memory",
+      "name": "Window Buffer Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        1280,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://evolution_api:8080/message/sendText/{{ $('Extract & Filter Message Data').item.json.instance }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"number\": \"{{ $('Extract & Filter Message Data').item.json.remoteJid }}\",\n  \"text\": {{ JSON.stringify($json.output) }}\n}",
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "send-whatsapp-reply",
+      "name": "Send WhatsApp Reply (Evolution API)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1480,
+        280
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "CONFIGURE_EVOLUTION_CREDENTIAL",
+          "name": "Escape Towns Evolution API"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook (Evolution API)": {
+      "main": [
+        [
+          {
+            "node": "Acknowledge 200 OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Acknowledge 200 OK": {
+      "main": [
+        [
+          {
+            "node": "Extract & Filter Message Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract & Filter Message Data": {
+      "main": [
+        [
+          {
+            "node": "Is Direct 1-on-1 Message?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Direct 1-on-1 Message?": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Window Buffer Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp Reply (Evolution API)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

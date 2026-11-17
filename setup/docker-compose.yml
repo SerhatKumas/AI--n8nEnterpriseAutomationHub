@@ -1,0 +1,64 @@
+services:
+  caddy:
+    image: caddy:latest
+    container_name: n8n_caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3 QUIC
+    environment:
+      - DOMAIN_NAME=${DOMAIN_NAME}
+      - SSL_EMAIL=${SSL_EMAIL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+      - studio_images:/srv/studio-images:ro
+    networks:
+      - n8n_network
+    depends_on:
+      - n8n
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:${N8N_VERSION:-latest}
+    container_name: n8n_app
+    restart: unless-stopped
+    environment:
+      - N8N_HOST=${DOMAIN_NAME}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - NODE_ENV=production
+      - WEBHOOK_URL=https://${DOMAIN_NAME}/
+      - N8N_PROXY_HOPS=1
+      - GENERIC_TIMEZONE=${GENERIC_TIMEZONE:-UTC}
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+      - NODE_OPTIONS=--max-old-space-size=512
+      - EXECUTIONS_DATA_SAVE_ON_ERROR=all
+      - EXECUTIONS_DATA_SAVE_ON_SUCCESS=none
+      - EXECUTIONS_DATA_PRUNE=true
+      - EXECUTIONS_DATA_MAX_AGE=48
+      - N8N_DEFAULT_BINARY_DATA_MODE=filesystem
+      - N8N_RUNNERS_GRANT_TOKEN_TTL=120
+      - N8N_RUNNERS_TASK_TIMEOUT=300
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - studio_images:/home/node/.n8n-files/studio-images
+    networks:
+      - n8n_network
+
+volumes:
+  studio_images:
+    name: n8n_studio_images
+  n8n_data:
+    name: n8n_storage
+  caddy_data:
+    name: caddy_certs
+  caddy_config:
+    name: caddy_config
+
+networks:
+  n8n_network:
+    name: n8n_network
+    driver: bridge

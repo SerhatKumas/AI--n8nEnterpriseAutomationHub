@@ -1,0 +1,31 @@
+{
+  "chat_id": "1519369571",
+  "text": "🎬 <b>NEW AI REEL READY FOR APPROVAL</b>\n━━━━━━━━━━━━━━━━━━━━━━\n📌 <b>Topic:</b> Autonomous AI Multi-Agent Swarms\n⏱️ <b>Duration:</b> 32 seconds\n🪝 <b>Hook:</b> <i>\"Stop writing prompts. Build swarms instead.\"</i>\n\n📝 <b>Narration Preview:</b>\nIf you're still typing 500-word prompts into ChatGPT, you're building software for 2023. In 2026, leading engineering teams use autonomous multi-agent swarms...\n\n🎥 <b>Rendered Video:</b> <a href=\"https://cdn.example.com/renders/reel_final.mp4\">Download Final MP4 ↗</a>\n📁 <b>Google Drive Backup:</b> <a href=\"https://drive.google.com/open?id=12345\">Drive Archive ↗</a>\n\n━━━━━━━━━━━━━━━━━━━━━━\n<b>Select an action below:</b>",
+  "parse_mode": "HTML",
+  "reply_markup": {
+    "inline_keyboard": [
+      [
+        {
+          "text": "✅ Approve & Post (Instagram/YouTube)",
+          "callback_data": "reel_action:approve:job_9847bf2a"
+        }
+      ],
+      [
+        {
+          "text": "🔄 Regenerate Video Clip",
+          "callback_data": "reel_action:regen_video:job_9847bf2a"
+        },
+        {
+          "text": "✏️ Edit Script / Hook",
+          "callback_data": "reel_action:edit_script:job_9847bf2a"
+        }
+      ],
+      [
+        {
+          "text": "❌ Reject & Discard",
+          "callback_data": "reel_action:reject:job_9847bf2a"
+        }
+      ]
+    ]
+  }
+}

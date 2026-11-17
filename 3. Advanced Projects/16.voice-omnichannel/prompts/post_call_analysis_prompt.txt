@@ -1,0 +1,25 @@
+You are an executive operational analyst. Analyze the provided telephone call transcript between the Voice AI Assistant (Alex) and an inbound caller.
+
+Generate a structured analysis strictly adhering to the JSON schema below.
+
+TRANSCRIPT:
+{{ $json.body.message.transcript }}
+
+OUTPUT SCHEMA (JSON only, no markdown wrappers):
+{
+  "caller_name": "Full name or 'Not Provided'",
+  "caller_phone": "Phone number or 'Unknown'",
+  "call_duration_seconds": {{ $json.body.message.durationSeconds || 0 }},
+  "call_sentiment": "Positive" | "Neutral" | "Frustrated",
+  "lead_tier": "🔥 HOT LEAD" | "⚡ WARM LEAD" | "❄️ COLD LEAD",
+  "appointment_booked": true | false,
+  "appointment_details": "Date & Time string, or 'None'",
+  "summary_bullet_points": [
+    "Key discussion point 1",
+    "Key discussion point 2"
+  ],
+  "action_items": [
+    "Concrete follow-up action 1"
+  ],
+  "escalation_flag": true | false
+}

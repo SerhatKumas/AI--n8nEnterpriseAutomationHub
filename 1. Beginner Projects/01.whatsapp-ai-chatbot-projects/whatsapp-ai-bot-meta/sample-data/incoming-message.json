@@ -1,0 +1,48 @@
+{
+  "headers": {
+    "host": "n8n.codewaft.com",
+    "content-type": "application/json",
+    "user-agent": "facebookexternalua"
+  },
+  "params": {},
+  "query": {},
+  "body": {
+    "object": "whatsapp_business_account",
+    "entry": [
+      {
+        "id": "100293847562819",
+        "changes": [
+          {
+            "value": {
+              "messaging_product": "whatsapp",
+              "metadata": {
+                "display_phone_number": "15551234567",
+                "phone_number_id": "109876543210987"
+              },
+              "contacts": [
+                {
+                  "profile": {
+                    "name": "Alex Smith"
+                  },
+                  "wa_id": "491701234567"
+                }
+              ],
+              "messages": [
+                {
+                  "from": "491701234567",
+                  "id": "wamid.HBgLNDkxNzAxMjM0NTY3FQIAERgSQjU1RjhEQjM0QzM1RjEwRDUyAA==",
+                  "timestamp": "1739832000",
+                  "text": {
+                    "body": "Hi there! What services does Codewaft offer?"
+                  },
+                  "type": "text"
+                }
+              ]
+            },
+            "field": "messages"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,676 @@
+{
+  "name": "Receipt & Expense Tracker via Photo Message",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "telegram-trigger",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        80,
+        400
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "CONFIGURE_TELEGRAM_BOT",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// =========================================================================\n// 🧭 ROUTE, CLASSIFY & PARSE INCOMING TELEGRAM EVENT\n// =========================================================================\nconst input = $input.first()?.json || {};\nconst DEFAULT_CHAT_ID = \"1519369571\"; // Serhat Kumas default Telegram Chat ID\n\n// =========================================================================\n// ⚙️ CENTRALIZED USER CONFIGURATION\n// =========================================================================\nconst CONFIG = {\n  // 📊 Google Sheets Document ID (from URL: /spreadsheets/d/<ID>/edit)\n  spreadsheetId: \"1RfUaHs0S3oYUKWkxjaUpXn8IM3gHcdpL097bS8q8vTM\",\n  \n  // 📑 Target sheet tab name for expenses\n  sheetName: \"Expenses\",\n  \n  // 📁 Parent Google Drive Folder ID for \"Expenses\" archive\n  expensesParentFolderId: \"1_vaeg2-25K0fowlTXxCixcANYBNoNQmj\",\n  \n  // 💶 Default currency when symbol is ambiguous\n  defaultCurrency: \"EUR\",\n  defaultCurrencySymbol: \"€\",\n  \n  // ⏰ Timezone\n  timezone: \"Europe/Berlin\"\n};\n\n// Access workflow persistent static memory for deduplication\nconst staticData = $getWorkflowStaticData(\"global\");\nstaticData.processedUpdates = staticData.processedUpdates || {};\nstaticData.monthlyFolders = staticData.monthlyFolders || {};\n\n// Clean up processed update IDs older than 3 minutes\nconst nowMs = Date.now();\nfor (const [key, timestamp] of Object.entries(staticData.processedUpdates)) {\n  if (nowMs - timestamp > 180000) {\n    delete staticData.processedUpdates[key];\n  }\n}\n\nconst msg = input.message || input.msg || input;\nconst chatId = String(msg.chat?.id || msg.from?.id || DEFAULT_CHAT_ID);\nconst messageId = msg.message_id || input.message_id;\nconst updateId = input.update_id || (messageId ? (chatId + \"_\" + messageId) : null);\n\n// Deduplication Guard: Ignore if exact same update was already processed\nif (updateId) {\n  const uKey = \"upd_\" + updateId;\n  if (staticData.processedUpdates[uKey]) {\n    return [{ json: { eventType: \"ignored\", reason: \"duplicate_update\", chatId } }];\n  }\n  staticData.processedUpdates[uKey] = nowMs;\n}\n\n// Current date and time context in Europe/Berlin\nconst now = new Date();\nconst todayIso = now.toISOString().split(\"T\")[0]; // YYYY-MM-DD\nconst currentYear = now.getFullYear();\nconst currentMonthNum = String(now.getMonth() + 1).padStart(2, \"0\");\nconst currentMonth = currentYear + \"-\" + currentMonthNum; // \"2026-11\"\n\nconst monthNames = [\n  \"January\", \"February\", \"March\", \"April\", \"May\", \"June\",\n  \"July\", \"August\", \"September\", \"October\", \"November\", \"December\"\n];\nconst currentMonthName = monthNames[now.getMonth()] + \" \" + currentYear;\nconst monthFolder = currentMonth + \" (\" + monthNames[now.getMonth()] + \")\";\n\n// 1. Detect Photo or Document Image Receipt\nconst photos = msg.photo;\nconst doc = msg.document;\nlet isImage = false;\nlet fileId = null;\nlet imageMimeType = \"image/jpeg\";\n\nif (Array.isArray(photos) && photos.length > 0) {\n  isImage = true;\n  // Highest resolution photo is the last item in Telegram photo array\n  const bestPhoto = photos[photos.length - 1];\n  fileId = bestPhoto.file_id;\n  imageMimeType = \"image/jpeg\";\n} else if (doc && (doc.mime_type?.startsWith(\"image/\") || /\\.(jpe?g|png|webp|heic)$/i.test(doc.file_name || \"\"))) {\n  isImage = true;\n  fileId = doc.file_id;\n  imageMimeType = doc.mime_type || \"image/jpeg\";\n}\n\nconst caption = String(msg.caption || \"\").trim();\nconst rawText = String(msg.text || caption || \"\").trim();\n\n// 2. Classify Event Type\nif (isImage) {\n  return [{\n    json: {\n      eventType: \"receipt_photo\",\n      fileId,\n      imageMimeType,\n      caption,\n      chatId,\n      messageId,\n      todayIso,\n      currentMonth,\n      currentMonthName,\n      monthFolder,\n      config: CONFIG\n    }\n  }];\n}\n\n// Check for Help / Start command\nconst lowerText = rawText.toLowerCase();\nif (lowerText === \"/start\" || lowerText === \"/help\" || lowerText === \"help\" || lowerText === \"yardım\") {\n  return [{\n    json: {\n      eventType: \"help\",\n      chatId,\n      messageId,\n      config: CONFIG\n    }\n  }];\n}\n\n// Check for Spending Query vs Text Expense\nconst queryTriggers = [\n  \"how much\", \"spend\", \"spent\", \"spending\", \"total\", \"breakdown\", \"status\", \"summary\",\n  \"report\", \"analysis\", \"budget\", \"cost\", \"expensive\", \"show me\", \"list\",\n  \"harcadım\", \"harcama\", \"harcamalar\", \"ne kadar\", \"toplam\", \"durum\", \"özet\",\n  \"rapor\", \"analiz\", \"bütçe\", \"göster\", \"kaç para\", \"masraf\",\n  \"january\", \"february\", \"march\", \"april\", \"may\", \"june\", \"july\", \"august\", \"september\", \"october\", \"november\", \"december\",\n  \"ocak\", \"şubat\", \"mart\", \"nisan\", \"mayıs\", \"haziran\", \"temmuz\", \"ağustos\", \"eylül\", \"ekim\", \"kasım\", \"aralık\",\n  \"this month\", \"last month\", \"bu ay\", \"geçen ay\"\n];\n\nconst isQuery = queryTriggers.some(trigger => lowerText.includes(trigger)) || lowerText.endsWith(\"?\");\n\nif (isQuery && rawText.length > 0) {\n  return [{\n    json: {\n      eventType: \"expense_query\",\n      rawText,\n      chatId,\n      messageId,\n      todayIso,\n      currentMonth,\n      currentMonthName,\n      config: CONFIG\n    }\n  }];\n}\n\nif (rawText.length > 0) {\n  return [{\n    json: {\n      eventType: \"receipt_text\",\n      rawText,\n      chatId,\n      messageId,\n      todayIso,\n      currentMonth,\n      currentMonthName,\n      config: CONFIG\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    eventType: \"ignored\",\n    chatId,\n    reason: \"empty_or_unsupported_update\"\n  }\n}];"
+      },
+      "id": "route-parse-input",
+      "name": "Route & Classify Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.eventType }}",
+                    "rightValue": "receipt_photo",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.eventType }}",
+                    "rightValue": "receipt_text",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.eventType }}",
+                    "rightValue": "expense_query",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.eventType }}",
+                    "rightValue": "help",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        }
+      },
+      "id": "branch-by-event",
+      "name": "Branch by Event Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        560,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "operation": "get",
+        "fileId": "={{ $json.fileId }}"
+      },
+      "id": "download-telegram-photo",
+      "name": "Download Telegram Photo",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        820,
+        160
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "CONFIGURE_TELEGRAM_BOT",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// =========================================================================\n// 🖼️ PREPARE IMAGE BUFFER FOR GEMINI VISION & GOOGLE DRIVE\n// =========================================================================\nconst items = $input.all();\nconst output = [];\n\nfor (let i = 0; i < items.length; i++) {\n  const item = items[i];\n  if (!item.binary?.data) {\n    throw new Error('No receipt image binary found in \"data\". Telegram download may have failed.');\n  }\n\n  // Read binary data using n8n's storage-aware helper\n  const buffer = await this.helpers.getBinaryDataBuffer(i, 'data');\n  if (!buffer.length) {\n    throw new Error('Downloaded receipt image buffer is empty. Please resend the photo.');\n  }\n\n  const routeMeta = $('Route & Classify Input').first().json;\n  const mimeType = item.binary.data.mimeType || routeMeta.imageMimeType || 'image/jpeg';\n  const timeStamp = new Date().toISOString().replace(/[:.]/g, '-');\n  const tempFileName = \"Receipt_\" + routeMeta.todayIso + \"_\" + timeStamp + \".jpg\";\n\n  output.push({\n    json: {\n      ...routeMeta,\n      imageMimeType: mimeType,\n      imageBase64: buffer.toString('base64'),\n      tempFileName,\n      timestamp: new Date().toISOString()\n    },\n    binary: {\n      data: item.binary.data\n    },\n    pairedItem: { item: i }\n  });\n}\n\nreturn output;"
+      },
+      "id": "prepare-image-buffer",
+      "name": "Prepare Image Buffer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1060,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "fileContent": "data",
+        "name": "={{ $json.tempFileName }}",
+        "options": {
+          "parents": [
+            "1_vaeg2-25K0fowlTXxCixcANYBNoNQmj"
+          ]
+        }
+      },
+      "id": "upload-receipt-to-drive",
+      "name": "Upload Receipt to Google Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1300,
+        160
+      ],
+      "credentials": {
+        "googleDriveOAuth2": {
+          "id": "CONFIGURE_GOOGLE_DRIVE",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [\n    {\n      \"parts\": [\n        {\n          \"text\": \"You are an elite, highly accurate financial accountant and receipt OCR specialist.\\nAnalyze this receipt photo thoroughly and extract the essential expense details into strictly valid JSON.\\n\\nCATEGORIES (Choose EXACTLY ONE from this list):\\n- Coffee & Snacks\\n- Dining Out & Restaurants\\n- Groceries & Supermarket\\n- Electronics & Tech\\n- Transportation & Travel\\n- Shopping & Clothing\\n- Housing & Utilities\\n- Health & Pharmacy\\n- Entertainment & Leisure\\n- General & Miscellaneous\\n\\nEXTRACTION RULES:\\n1. merchant: The store, restaurant, or vendor name (e.g. Starbucks, Rewe, MediaMarkt, Uber, Apple Store). Clean up slogans or legal tags like GmbH/Ltd.\\n2. date: Transaction date formatted as YYYY-MM-DD. If year is 2-digit, assume 20XX. If date is not found or faded, use today: {{ $('Prepare Image Buffer').first().json.todayIso }}.\\n3. totalAmount: Final total paid amount as a numeric float (e.g. 14.50). NEVER include currency symbols in this field.\\n4. currency: 3-letter currency code (e.g. EUR, USD, TRY, GBP). Default: {{ $('Prepare Image Buffer').first().json.config.defaultCurrency }}.\\n5. currencySymbol: Currency symbol (e.g. €, $, ₺, £).\\n6. category: Exactly one category from the list above.\\n7. itemsSummary: A concise 1-line comma-separated summary of the top items purchased (e.g. 'Caramel Macchiato, Croissant').\\n8. paymentMethod: Payment method if visible ('Apple Pay', 'Credit Card', 'Cash', 'Debit Card', or 'Unknown').\\n9. isReceipt: true if this is an expense receipt or bill; false if completely unrelated image.\\n\\nRespond with ONLY JSON matching this structure:\\n{\\n  \\\"isReceipt\\\": true,\\n  \\\"merchant\\\": \\\"...\\\",\\n  \\\"date\\\": \\\"YYYY-MM-DD\\\",\\n  \\\"totalAmount\\\": 0.00,\\n  \\\"currency\\\": \\\"EUR\\\",\\n  \\\"currencySymbol\\\": \\\"€\\\",\\n  \\\"category\\\": \\\"...\\\",\\n  \\\"itemsSummary\\\": \\\"...\\\",\\n  \\\"paymentMethod\\\": \\\"...\\\"\\n}\"\n        },\n        {\n          \"inlineData\": {\n            \"mimeType\": \"{{ $('Prepare Image Buffer').first().json.imageMimeType }}\",\n            \"data\": \"{{ $('Prepare Image Buffer').first().json.imageBase64 }}\"\n          }\n        }\n      ]\n    }\n  ],\n  \"generationConfig\": {\n    \"temperature\": 0.1,\n    \"responseMimeType\": \"application/json\"\n  }\n}"
+      },
+      "id": "gemini-vision-extract",
+      "name": "Gemini Vision: Extract Receipt Details",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        160
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "CONFIGURE_GEMINI_API",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// =========================================================================\n// 🔗 MERGE GEMINI VISION EXTRACTION & GOOGLE DRIVE LINK\n// =========================================================================\nconst visionResp = $input.first()?.json || $('Gemini Vision: Extract Receipt Details').first()?.json || {};\nconst meta = $('Prepare Image Buffer').first().json;\n\nlet driveResp = {};\ntry {\n  driveResp = $('Upload Receipt to Google Drive').first()?.json || {};\n} catch (e) {\n  driveResp = {};\n}\n\nlet parsed = {};\ntry {\n  const rawText = visionResp.candidates?.[0]?.content?.parts?.[0]?.text || '{}';\n  parsed = JSON.parse(rawText);\n} catch (e) {\n  parsed = {\n    isReceipt: true,\n    merchant: 'Unknown Store',\n    date: meta.todayIso,\n    totalAmount: 0.0,\n    currency: meta.config.defaultCurrency,\n    currencySymbol: meta.config.defaultCurrencySymbol,\n    category: 'General & Miscellaneous',\n    itemsSummary: meta.caption || 'Receipt photo'\n  };\n}\n\n// Drive link to preview uploaded receipt photo\nconst driveLink = driveResp.webViewLink || driveResp.webContentLink || \n  (driveResp.id ? (\"https://drive.google.com/file/d/\" + driveResp.id + \"/view\") : \"N/A\");\n\nconst totalAmount = parseFloat(parsed.totalAmount) || 0.0;\nconst dateStr = parsed.date || meta.todayIso;\nconst monthStr = dateStr.slice(0, 7);\n\nreturn [{\n  json: {\n    chatId: meta.chatId,\n    messageId: meta.messageId,\n    isReceipt: parsed.isReceipt !== false,\n    merchant: parsed.merchant || 'Unknown Merchant',\n    date: dateStr,\n    month: monthStr,\n    totalAmount,\n    currency: parsed.currency || meta.config.defaultCurrency,\n    currencySymbol: parsed.currencySymbol || meta.config.defaultCurrencySymbol,\n    category: parsed.category || 'General & Miscellaneous',\n    itemsSummary: parsed.itemsSummary || meta.caption || 'Receipt item',\n    paymentMethod: parsed.paymentMethod || 'Unknown',\n    driveLink,\n    driveFileId: driveResp.id || null,\n    source: 'photo',\n    config: meta.config\n  }\n}];"
+      },
+      "id": "merge-photo-and-vision",
+      "name": "Merge Vision & Drive Link",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [\n    {\n      \"parts\": [\n        {\n          \"text\": \"You are an elite personal expense accountant.\\nThe user sent the following text message to log an expense:\\n\\\"{{ $json.rawText }}\\\"\\n\\nCURRENT DATE CONTEXT:\\n- Today: {{ $json.todayIso }}\\n- Default Currency: {{ $json.config.defaultCurrency }}\\n\\nCATEGORIES (Choose EXACTLY ONE from this list):\\n- Coffee & Snacks\\n- Dining Out & Restaurants\\n- Groceries & Supermarket\\n- Electronics & Tech\\n- Transportation & Travel\\n- Shopping & Clothing\\n- Housing & Utilities\\n- Health & Pharmacy\\n- Entertainment & Leisure\\n- General & Miscellaneous\\n\\nEXTRACTION RULES:\\n1. merchant: The business, cafe, or vendor name (e.g. 'Starbucks', 'Rewe', 'Uber', 'Apple Store'). If not stated, deduce from context (e.g. 'coffee' -> 'Cafe / Coffee Shop', 'taxi' -> 'Taxi Service').\\n2. date: Transaction date formatted as YYYY-MM-DD. If user specified relative date like 'yesterday', calculate from today ({{ $json.todayIso }}). Default: {{ $json.todayIso }}.\\n3. totalAmount: Total numeric amount as a float (e.g. 15.50). Convert commas to periods if needed.\\n4. currency: 3-letter currency code (e.g. EUR, USD, TRY, GBP). Default: {{ $json.config.defaultCurrency }}.\\n5. currencySymbol: Currency symbol (€, $, ₺, £).\\n6. category: Exactly one category from the list above.\\n7. itemsSummary: Concise 1-line item summary.\\n8. paymentMethod: Payment method if mentioned, else 'Manual Entry'.\\n\\nRespond ONLY with valid JSON:\\n{\\n  \\\"merchant\\\": \\\"...\\\",\\n  \\\"date\\\": \\\"YYYY-MM-DD\\\",\\n  \\\"totalAmount\\\": 0.00,\\n  \\\"currency\\\": \\\"EUR\\\",\\n  \\\"currencySymbol\\\": \\\"€\\\",\\n  \\\"category\\\": \\\"...\\\",\\n  \\\"itemsSummary\\\": \\\"...\\\",\\n  \\\"paymentMethod\\\": \\\"Manual Entry\\\"\\n}\"\n        }\n      ]\n    }\n  ],\n  \"generationConfig\": {\n    \"temperature\": 0.1,\n    \"responseMimeType\": \"application/json\"\n  }\n}"
+      },
+      "id": "gemini-text-expense-extract",
+      "name": "Gemini: Extract Text Expense Details",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        820,
+        380
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "CONFIGURE_GEMINI_API",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// =========================================================================\n// 📝 PARSE TEXT EXPENSE OUTPUT\n// =========================================================================\nconst resp = $input.first()?.json || {};\nconst meta = $('Route & Classify Input').first().json;\n\nlet parsed = {};\ntry {\n  const rawText = resp.candidates?.[0]?.content?.parts?.[0]?.text || '{}';\n  parsed = JSON.parse(rawText);\n} catch (e) {\n  parsed = {\n    merchant: 'Manual Expense',\n    date: meta.todayIso,\n    totalAmount: 0.0,\n    currency: meta.config.defaultCurrency,\n    currencySymbol: meta.config.defaultCurrencySymbol,\n    category: 'General & Miscellaneous',\n    itemsSummary: meta.rawText\n  };\n}\n\nconst totalAmount = parseFloat(parsed.totalAmount) || 0.0;\nconst dateStr = parsed.date || meta.todayIso;\nconst monthStr = dateStr.slice(0, 7);\n\nreturn [{\n  json: {\n    chatId: meta.chatId,\n    messageId: meta.messageId,\n    isReceipt: true,\n    merchant: parsed.merchant || 'Manual Store',\n    date: dateStr,\n    month: monthStr,\n    totalAmount,\n    currency: parsed.currency || meta.config.defaultCurrency,\n    currencySymbol: parsed.currencySymbol || meta.config.defaultCurrencySymbol,\n    category: parsed.category || 'General & Miscellaneous',\n    itemsSummary: parsed.itemsSummary || meta.rawText,\n    paymentMethod: parsed.paymentMethod || 'Manual Entry',\n    driveLink: 'N/A (Text Entry)',\n    driveFileId: null,\n    source: 'text',\n    config: meta.config\n  }\n}];"
+      },
+      "id": "format-text-expense",
+      "name": "Format Text Expense Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1060,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// =========================================================================\n// 📊 PREPARE GOOGLE SHEETS EXPENSE ROW\n// =========================================================================\nconst item = $input.first().json;\nconst config = item.config || {};\n\nconst dateStr = item.date || new Date().toISOString().split('T')[0];\nconst monthStr = item.month || dateStr.slice(0, 7);\n\n// Standardized row mapping matching the Google Sheets Expense Tracker\nconst sheetRow = {\n  Date: dateStr,\n  Month: monthStr,\n  Merchant: item.merchant || 'Unknown Merchant',\n  Category: item.category || 'General & Miscellaneous',\n  Amount: item.totalAmount || 0,\n  Currency: item.currency || 'EUR',\n  'Receipt Drive Link': item.driveLink || 'N/A',\n  'Items / Notes': item.itemsSummary || '',\n  'Logged At': new Date().toISOString().replace('T', ' ').slice(0, 19)\n};\n\nreturn [{\n  json: {\n    ...item,\n    ...sheetRow,\n    spreadsheetId: config.spreadsheetId,\n    sheetName: config.sheetName || 'Expenses'\n  }\n}];"
+      },
+      "id": "prepare-sheet-expense-row",
+      "name": "Prepare Sheet Expense Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1800,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1RfUaHs0S3oYUKWkxjaUpXn8IM3gHcdpL097bS8q8vTM",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $json.sheetName }}",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "append-expense-to-sheet",
+      "name": "Append Expense to Google Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2040,
+        260
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "CONFIGURE_GOOGLE_SHEETS",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "=🧾 <b>Expense Logged Successfully!</b>\n━━━━━━━━━━━━━━━━━━━━\n🏪 <b>Merchant:</b> {{ $json.Merchant }}\n💰 <b>Amount:</b> {{ $json.currencySymbol || '€' }}{{ $json.Amount.toFixed(2) }} {{ $json.Currency }}\n🏷️ <b>Category:</b> {{ $json.Category }}\n📅 <b>Date:</b> {{ $json.Date }}\n📝 <b>Details:</b> {{ $json['Items / Notes'] }}\n━━━━━━━━━━━━━━━━━━━━\n{{ $json['Receipt Drive Link'] !== 'N/A' && $json['Receipt Drive Link'] !== 'N/A (Text Entry)' ? '📁 <a href=\"' + $json['Receipt Drive Link'] + '\">View Receipt in Google Drive</a>\\n' : '' }}📊 <a href=\"https://docs.google.com/spreadsheets/d/{{ $json.spreadsheetId }}/edit\">Open Expense Tracker Sheet ↗</a>",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "disable_web_page_preview": false
+        }
+      },
+      "id": "send-expense-telegram-confirm",
+      "name": "Send Telegram Expense Confirmation",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2280,
+        260
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "CONFIGURE_TELEGRAM_BOT",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// =========================================================================\n// 🔍 PARSE SPENDING QUERY TARGET PERIOD & INTENT\n// =========================================================================\nconst item = $input.first().json;\nconst rawText = String(item.rawText || '').trim();\nconst lower = rawText.toLowerCase();\nconst now = new Date();\nconst currentYear = now.getFullYear();\nconst currentMonthNum = now.getMonth() + 1; // 1-12\n\n// Month lookup dictionaries in English and Turkish\nconst monthsMap = {\n  // English\n  january: 1, jan: 1,\n  february: 2, feb: 2,\n  march: 3, mar: 3,\n  april: 4, apr: 4,\n  may: 5,\n  june: 6, jun: 6,\n  july: 7, jul: 7,\n  august: 8, aug: 8,\n  september: 9, sep: 9, sept: 9,\n  october: 10, oct: 10,\n  november: 11, nov: 11,\n  december: 12, dec: 12,\n  // Turkish\n  ocak: 1, oca: 1,\n  subat: 2, şubat: 2, sub: 2, şub: 2,\n  mart: 3, mar: 3,\n  nisan: 4, nis: 4,\n  mayis: 5, mayıs: 5,\n  haziran: 6, haz: 6,\n  temmuz: 7, tem: 7,\n  agustos: 8, ağustos: 8, agu: 8, ağu: 8,\n  eylul: 9, eylül: 9, eyl: 9,\n  ekim: 10, eki: 10,\n  kasim: 11, kasım: 11, kas: 11,\n  aralik: 12, aralık: 12, ara: 12\n};\n\nconst monthNamesEn = [\n  \"\", \"January\", \"February\", \"March\", \"April\", \"May\", \"June\",\n  \"July\", \"August\", \"September\", \"October\", \"November\", \"December\"\n];\n\nlet targetMonth = null;\nlet targetYear = currentYear;\nlet monthName = \"\";\n\n// Check explicit month name in query\nfor (const [mName, mNum] of Object.entries(monthsMap)) {\n  const regex = new RegExp('\\\\b' + mName + '\\\\b', 'i');\n  if (regex.test(lower)) {\n    targetMonth = mNum;\n    break;\n  }\n}\n\n// Check relative periods\nif (lower.includes('this month') || lower.includes('bu ay') || lower.includes('current month')) {\n  targetMonth = currentMonthNum;\n  targetYear = currentYear;\n} else if (lower.includes('last month') || lower.includes('gecen ay') || lower.includes('geçen ay') || lower.includes('previous month')) {\n  if (currentMonthNum === 1) {\n    targetMonth = 12;\n    targetYear = currentYear - 1;\n  } else {\n    targetMonth = currentMonthNum - 1;\n    targetYear = currentYear;\n  }\n} else if (lower.includes('all time') || lower.includes('overall') || lower.includes('hepsi') || lower.includes('tum zamanlar') || lower.includes('tüm zamanlar')) {\n  targetMonth = 'all';\n}\n\n// If no month found, default to current month\nif (!targetMonth) {\n  targetMonth = currentMonthNum;\n}\n\n// Detect specific year if mentioned (e.g. 2025 or 2026)\nconst yearMatch = rawText.match(/\\b(202[4-9])\\b/);\nif (yearMatch) {\n  targetYear = parseInt(yearMatch[1], 10);\n}\n\nlet targetPeriod = \"\";\nif (targetMonth === 'all') {\n  targetPeriod = 'all';\n  monthName = 'All Time';\n} else {\n  const mStr = String(targetMonth).padStart(2, '0');\n  targetPeriod = targetYear + '-' + mStr;\n  monthName = monthNamesEn[targetMonth] + ' ' + targetYear;\n}\n\n// Detect category filter if user specifically asked about one\nlet categoryFilter = null;\nif (/coffee|kahve|cafe/i.test(lower)) categoryFilter = 'Coffee & Snacks';\nelse if (/restaurant|eating out|yemek|restoran|dinner|lunch/i.test(lower)) categoryFilter = 'Dining Out & Restaurants';\nelse if (/grocer|market|supermarket|bakkal/i.test(lower)) categoryFilter = 'Groceries & Supermarket';\nelse if (/tech|computer|electronics|apple|telefon|bilgisayar|teknoloji/i.test(lower)) categoryFilter = 'Electronics & Tech';\nelse if (/uber|taxi|transport|taksi|ulasim|ulaşım|benzin|fuel/i.test(lower)) categoryFilter = 'Transportation & Travel';\n\nreturn [{\n  json: {\n    ...item,\n    targetPeriod,\n    monthName,\n    categoryFilter,\n    rawQuestion: rawText,\n    isTurkish: /harca|ne kadar|mart|ayında|özet|bütçe|göster/i.test(lower),\n    spreadsheetId: item.config.spreadsheetId,\n    sheetName: item.config.sheetName || 'Expenses'\n  }\n}];"
+      },
+      "id": "parse-query-intent",
+      "name": "Parse Spending Query Target Period",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        820,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "1RfUaHs0S3oYUKWkxjaUpXn8IM3gHcdpL097bS8q8vTM",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $json.sheetName }}",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "read-sheet-expense-history",
+      "name": "Read Expense History from Google Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1060,
+        560
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "CONFIGURE_GOOGLE_SHEETS",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// =========================================================================\n// 📈 AGGREGATE MONTHLY SPENDING & CATEGORY BREAKDOWN\n// =========================================================================\nconst allRows = $input.all().map(item => item.json);\nconst queryMeta = $('Parse Spending Query Target Period').first().json;\nconst targetPeriod = queryMeta.targetPeriod; // e.g. \"2026-03\" or \"all\"\nconst categoryFilter = queryMeta.categoryFilter;\n\n// Filter rows matching target period\nconst matchingRows = allRows.filter(row => {\n  const rowDate = String(row.Date || row.date || '');\n  const rowMonth = String(row.Month || row.month || rowDate.slice(0, 7));\n  \n  const matchesPeriod = (targetPeriod === 'all') || (rowMonth === targetPeriod) || (rowDate.startsWith(targetPeriod));\n  if (!matchesPeriod) return false;\n  \n  if (categoryFilter) {\n    const rowCat = String(row.Category || row.category || '');\n    return rowCat.toLowerCase().includes(categoryFilter.toLowerCase());\n  }\n  return true;\n});\n\nif (matchingRows.length === 0) {\n  return [{\n    json: {\n      ...queryMeta,\n      hasData: false,\n      totalSpend: 0,\n      transactionCount: 0,\n      categoryBreakdown: [],\n      topExpenses: [],\n      briefingPrompt: \"No expense records found for \" + queryMeta.monthName + \".\"\n    }\n  }];\n}\n\nlet grandTotal = 0;\nconst catTotals = {};\nconst catCounts = {};\nconst currency = matchingRows[0]?.Currency || matchingRows[0]?.currency || 'EUR';\n\nfor (const row of matchingRows) {\n  const rawAmt = row.Amount || row.amount || 0;\n  const amt = parseFloat(String(rawAmt).replace(/[^0-9.-]/g, '')) || 0;\n  grandTotal += amt;\n  \n  const cat = String(row.Category || row.category || 'General & Miscellaneous').trim();\n  catTotals[cat] = (catTotals[cat] || 0) + amt;\n  catCounts[cat] = (catCounts[cat] || 0) + 1;\n}\n\n// Category icons map\nconst categoryIcons = {\n  'Coffee & Snacks': '☕',\n  'Dining Out & Restaurants': '🍽️',\n  'Groceries & Supermarket': '🛒',\n  'Electronics & Tech': '💻',\n  'Transportation & Travel': '🚗',\n  'Shopping & Clothing': '🛍️',\n  'Housing & Utilities': '🏠',\n  'Health & Pharmacy': '💊',\n  'Entertainment & Leisure': '🎬',\n  'General & Miscellaneous': '📦'\n};\n\nconst categoryBreakdown = Object.keys(catTotals).map(cat => {\n  const total = catTotals[cat];\n  const count = catCounts[cat];\n  const pct = grandTotal > 0 ? ((total / grandTotal) * 100).toFixed(1) : '0.0';\n  const icon = categoryIcons[cat] || '🏷️';\n  return {\n    category: cat,\n    icon,\n    totalAmount: parseFloat(total.toFixed(2)),\n    percentage: parseFloat(pct),\n    count,\n    avgPerTransaction: parseFloat((total / count).toFixed(2))\n  };\n}).sort((a, b) => b.totalAmount - a.totalAmount);\n\n// Top 3 highest individual expenses\nconst topExpenses = [...matchingRows]\n  .map(row => {\n    const rawAmt = row.Amount || row.amount || 0;\n    const amt = parseFloat(String(rawAmt).replace(/[^0-9.-]/g, '')) || 0;\n    return {\n      merchant: row.Merchant || row.merchant || 'Unknown',\n      amount: amt,\n      category: row.Category || row.category || 'General',\n      date: row.Date || row.date || ''\n    };\n  })\n  .sort((a, b) => b.amount - a.amount)\n  .slice(0, 3);\n\n// Unique dates to compute daily average\nconst uniqueDates = new Set(matchingRows.map(r => r.Date || r.date).filter(Boolean));\nconst dailyAverage = uniqueDates.size > 0 ? (grandTotal / uniqueDates.size).toFixed(2) : grandTotal.toFixed(2);\n\nreturn [{\n  json: {\n    ...queryMeta,\n    hasData: true,\n    currency,\n    totalSpend: parseFloat(grandTotal.toFixed(2)),\n    transactionCount: matchingRows.length,\n    dailyAverage: parseFloat(dailyAverage),\n    activeDays: uniqueDates.size,\n    categoryBreakdown,\n    topExpenses\n  }\n}];"
+      },
+      "id": "aggregate-spending-stats",
+      "name": "Aggregate Monthly Spending & Categories",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [\n    {\n      \"parts\": [\n        {\n          \"text\": \"You are Serhat Kumas's elite Personal Financial Intelligence Analyst.\\nThe user asked: \\\"{{ $json.rawQuestion }}\\\"\\n\\nHere is the exact aggregated financial data for {{ $json.monthName }}:\\n- Total Spend: {{ $json.totalSpend }} {{ $json.currency }}\\n- Total Transactions: {{ $json.transactionCount }}\\n- Daily Average: {{ $json.dailyAverage }} {{ $json.currency }}\\n- Has Data: {{ $json.hasData }}\\n\\nCategory Breakdown:\\n{{ JSON.stringify($json.categoryBreakdown, null, 2) }}\\n\\nTop Purchases:\\n{{ JSON.stringify($json.topExpenses, null, 2) }}\\n\\nTASK:\\nGenerate a high-end, executive financial analysis briefing formatted for Telegram in HTML.\\n\\nCRITICAL GUIDELINES:\\n1. If hasData is false, politely state that no expenses are recorded yet for {{ $json.monthName }}, and explain that they can snap a photo or text an expense anytime.\\n2. If hasData is true, format a stunning breakdown:\\n   - Header with period and grand total\\n   - Each category with its emoji, name, total spent, percentage, and a visual ASCII bar indicator (e.g. [████░░░░░░] 42%)\\n   - Top 3 largest purchases\\n   - 1-2 sharp personal financial takeaways (e.g. coffee vs dining ratio, major tech outlay)\\n3. Language rule: If the user query is in Turkish (or isTurkish is true), respond in Turkish! If English, respond in English!\\n4. Keep HTML tags clean: <b>, <i>, <code>, <a href=\\\"...\\\">. Zero markdown backticks.\"\n        }\n      ]\n    }\n  ],\n  \"generationConfig\": {\n    \"temperature\": 0.2\n  }\n}"
+      },
+      "id": "gemini-generate-analysis-briefing",
+      "name": "Gemini: Generate Financial Analysis Briefing",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        560
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "CONFIGURE_GEMINI_API",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.candidates[0].content.parts[0].text }}\n\n━━━━━━━━━━━━━━━━━━━━\n📊 <a href=\"https://docs.google.com/spreadsheets/d/{{ $('Parse Spending Query Target Period').first().json.spreadsheetId }}/edit\">Open Full Expense Tracker Sheet ↗</a>",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "disable_web_page_preview": false
+        }
+      },
+      "id": "send-telegram-analytics-report",
+      "name": "Send Telegram Spending Analysis",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1800,
+        560
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "CONFIGURE_TELEGRAM_BOT",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "=👋 <b>Welcome to Receipt & Expense Tracker AI!</b>\n━━━━━━━━━━━━━━━━━━━━\nI am your automated financial accountant. Here is how you can use me:\n\n📸 <b>Log an Expense via Photo:</b>\n• Snap a photo of any receipt and send it here.\n• I will archive it to Google Drive, extract Merchant, Date, Amount & Category with Gemini Vision, and append it to your Google Sheet!\n\n✍️ <b>Log an Expense via Text:</b>\n• Type a quick expense message:\n  <i>\"Starbucks 5.80 EUR latte\"</i>\n  <i>\"Rewe 42.50 groceries\"</i>\n  <i>\"Uber 18 EUR taxi\"</i>\n\n📊 <b>Ask Spending & Analytics Questions:</b>\n• <i>\"How much did I spend in March?\"</i>\n• <i>\"What did I spend this month?\"</i>\n• <i>\"Mart ayında ne kadar harcadım?\"</i>\n• <i>\"Show my coffee spending this month\"</i>\n• <i>\"Geçen ayki harcama dökümüm nedir?\"</i>\n\n━━━━━━━━━━━━━━━━━━━━\n📊 <a href=\"https://docs.google.com/spreadsheets/d/{{ $json.config.spreadsheetId }}/edit\">View Google Sheets Tracker ↗</a>",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "disable_web_page_preview": false
+        }
+      },
+      "id": "send-telegram-help",
+      "name": "Send Telegram Help Guide",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        820,
+        720
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "CONFIGURE_TELEGRAM_BOT",
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Route & Classify Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route & Classify Input": {
+      "main": [
+        [
+          {
+            "node": "Branch by Event Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Branch by Event Type": {
+      "main": [
+        [
+          {
+            "node": "Download Telegram Photo",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Gemini: Extract Text Expense Details",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Parse Spending Query Target Period",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Telegram Help Guide",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Telegram Photo": {
+      "main": [
+        [
+          {
+            "node": "Prepare Image Buffer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Image Buffer": {
+      "main": [
+        [
+          {
+            "node": "Upload Receipt to Google Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Receipt to Google Drive": {
+      "main": [
+        [
+          {
+            "node": "Gemini Vision: Extract Receipt Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Vision: Extract Receipt Details": {
+      "main": [
+        [
+          {
+            "node": "Merge Vision & Drive Link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Vision & Drive Link": {
+      "main": [
+        [
+          {
+            "node": "Prepare Sheet Expense Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini: Extract Text Expense Details": {
+      "main": [
+        [
+          {
+            "node": "Format Text Expense Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Text Expense Payload": {
+      "main": [
+        [
+          {
+            "node": "Prepare Sheet Expense Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Sheet Expense Row": {
+      "main": [
+        [
+          {
+            "node": "Append Expense to Google Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append Expense to Google Sheet": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Expense Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Spending Query Target Period": {
+      "main": [
+        [
+          {
+            "node": "Read Expense History from Google Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Expense History from Google Sheet": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Monthly Spending & Categories",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Monthly Spending & Categories": {
+      "main": [
+        [
+          {
+            "node": "Gemini: Generate Financial Analysis Briefing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini: Generate Financial Analysis Briefing": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Spending Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

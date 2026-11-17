@@ -1,0 +1,60 @@
+{
+  "video_title": "How to Build Autonomous AI Agents That Actually Make Money (2026 Blueprint)",
+  "total_duration": "38:45",
+  "viral_clips": [
+    {
+      "clip_number": 1,
+      "clip_title": "The $10k AI Lie",
+      "start_time": "04:12",
+      "end_time": "05:08",
+      "start_seconds": 252,
+      "end_seconds": 308,
+      "duration_seconds": 56,
+      "hook_options": {
+        "spoken_hook": "Stop building chatbots for local pizza shops. You are burning your runway.",
+        "screen_text_hook": "WHY 95% OF AI AGENCIES FAIL IN 30 DAYS 🛑",
+        "visual_action_hook": "Dramatic 25% punch-in camera zoom, screen tint changes to subtle red, SFX record scratch."
+      },
+      "retention_psychology": "Pattern interrupt & painful truth. Directly attacks the over-saturated advice on YouTube, creating an instant curiosity gap.",
+      "full_script_with_editing_cues": "[ZOOM IN] Stop building chatbots for local pizza shops. You are burning your runway. [TEXT POP: BURNING RUNWAY] The companies paying real money aren't looking for a toy widget on their website. They have a 12-person back-office manually copying CSV data into SAP. [B-ROLL: Frustrated office worker] If you automate THAT single workflow with n8n and an LLM triager, they will happily wire you $5,000 upfront and $1,500 every single month.",
+      "social_caption": "Most people pitching AI automation are pitching the wrong clients with the wrong tools. Here's where the actual enterprise money is hiding in 2026. 👇 #AIAgency #Automation #n8n #BusinessGrowth",
+      "recommended_hashtags": ["#AIAutomation", "#n8n", "#AgencyOwner", "#TechEntrepreneur", "#Reels"]
+    },
+    {
+      "clip_number": 2,
+      "clip_title": "The 3-Agent Loop",
+      "start_time": "14:35",
+      "end_time": "15:22",
+      "start_seconds": 875,
+      "end_seconds": 922,
+      "duration_seconds": 47,
+      "hook_options": {
+        "spoken_hook": "Here is the exact 3-agent architecture we use to close $15,000 enterprise contracts.",
+        "screen_text_hook": "THE 3-AGENT ARCHITECTURE (STEAL THIS) ⚡",
+        "visual_action_hook": "Host holds up tablet showing visual node diagram with neon connecting arrows."
+      },
+      "retention_psychology": "Framework disclosure. People love proprietary '3-step' formulas that turn abstract concepts into tangible engineering blocks.",
+      "full_script_with_editing_cues": "Here is the exact 3-agent architecture we use to close $15,000 enterprise contracts. [GRAPHIC: Agent 1 - The Classifier] Agent one triages incoming tickets in 200 milliseconds. [GRAPHIC: Agent 2 - The Researcher] Agent two queries a private Qdrant vector database. [GRAPHIC: Agent 3 - The Executor] Agent three triggers the external refund or booking API. [SFX: Cash Register] You never build one giant prompt; you chain specialist agents together.",
+      "social_caption": "Never build one monolithic prompt. Build an autonomous specialist pipeline. Here is the 3-agent framework explained in 45 seconds. Save this for your next client build! 🚀",
+      "recommended_hashtags": ["#AIArchitecture", "#LangChain", "#SoftwareEngineering", "#AIModels", "#ViralReels"]
+    },
+    {
+      "clip_number": 3,
+      "clip_title": "Self-Healing Workflows",
+      "start_time": "28:10",
+      "end_time": "29:05",
+      "start_seconds": 1690,
+      "end_seconds": 1745,
+      "duration_seconds": 55,
+      "hook_options": {
+        "spoken_hook": "If your AI workflow crashes when an API goes down, you don't have an agent. You have a liability.",
+        "screen_text_hook": "DO NOT DEPLOY WITHOUT SELF-HEALING ⚠️",
+        "visual_action_hook": "Red warning strobe effect, host gestures emphatically towards the camera."
+      },
+      "retention_psychology": "Fear of catastrophic failure combined with authority advice on resilience.",
+      "full_script_with_editing_cues": "If your AI workflow crashes when an API goes down, you don't have an agent. You have a liability. [ALERT ICON] In production, third-party APIs fail 2% of the time. [B-ROLL: Server 500 error screen] A production-ready agent must have self-healing error branches, exponential backoff, and instant Telegram administrator alerts. Build for failure first, speed second.",
+      "social_caption": "The difference between amateur hobby bots and enterprise production software is error handling. Here's how to build bulletproof resilience into your workflows. 🛡️",
+      "recommended_hashtags": ["#DevOps", "#n8nEngineering", "#Reliability", "#SoftwareArchitecture", "#Shorts"]
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+Date,Month,Merchant,Category,Amount,Currency,Receipt Drive Link,Items / Notes,Logged At
+2026-03-02,2026-03,Starbucks,Coffee & Snacks,5.80,EUR,https://drive.google.com/file/d/sample-receipt-1/view,Caffe Latte & Croissant,2026-03-02 09:15:22
+2026-03-04,2026-03,Rewe Supermarket,Groceries & Supermarket,42.50,EUR,https://drive.google.com/file/d/sample-receipt-2/view,Fresh vegetables milk bread chicken,2026-03-04 18:30:10
+2026-03-06,2026-03,Uber,Transportation & Travel,18.40,EUR,https://drive.google.com/file/d/sample-receipt-3/view,Ride to Central Station,2026-03-06 22:10:05
+2026-03-10,2026-03,Vapiano,Dining Out & Restaurants,28.50,EUR,https://drive.google.com/file/d/sample-receipt-4/view,Pasta Carbonara & Sparkling Water,2026-03-10 13:45:00
+2026-03-12,2026-03,MediaMarkt,Electronics & Tech,89.99,EUR,https://drive.google.com/file/d/sample-receipt-5/view,USB-C Hub and HDMI cable,2026-03-12 16:20:45
+2026-03-15,2026-03,The Barn Coffee Roasters,Coffee & Snacks,6.50,EUR,https://drive.google.com/file/d/sample-receipt-6/view,Flat White & Cookie,2026-03-15 11:00:30
+2026-03-18,2026-03,Edeka,Groceries & Supermarket,35.20,EUR,https://drive.google.com/file/d/sample-receipt-7/view,Olive oil fruits eggs pasta,2026-03-18 19:12:18
+2026-03-22,2026-03,Burgermeister,Dining Out & Restaurants,16.80,EUR,https://drive.google.com/file/d/sample-receipt-8/view,Cheeseburger & Fries,2026-03-22 20:05:11
+2026-03-25,2026-03,Apple Store Kurfuerstendamm,Electronics & Tech,149.00,EUR,https://drive.google.com/file/d/sample-receipt-9/view,Apple Pencil Pro,2026-03-25 15:40:00
+2026-03-28,2026-03,Apotheke Berlin,Health & Pharmacy,22.30,EUR,https://drive.google.com/file/d/sample-receipt-10/view,Vitamins and pain relief,2026-03-28 14:10:20
+2026-11-01,2026-11,Starbucks,Coffee & Snacks,6.20,EUR,https://drive.google.com/file/d/sample-receipt-11/view,Pumpkin Spice Latte,2026-11-01 10:20:00
+2026-11-03,2026-11,Lidl,Groceries & Supermarket,29.40,EUR,https://drive.google.com/file/d/sample-receipt-12/view,Groceries and snacks,2026-11-03 17:45:12
+2026-11-04,2026-11,Cyberport,Electronics & Tech,59.00,EUR,https://drive.google.com/file/d/sample-receipt-13/view,Mechanical Keyboard Switch Set,2026-11-04 14:15:33
+

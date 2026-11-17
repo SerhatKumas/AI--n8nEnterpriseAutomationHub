@@ -1,0 +1,58 @@
+{$DOMAIN_NAME} {
+    # Automatic SSL certificate management via Let's Encrypt / ZeroSSL
+    tls {$SSL_EMAIL}
+
+    # Trace only Instagram ingress. Keep request bodies and credentials out of logs.
+    log instagram_leads {
+        output file /data/instagram-leads-access.log {
+            mode 0600
+            roll_size 5MiB
+            roll_keep 2
+        }
+        format filter {
+            wrap json
+            fields {
+                request>uri query {
+                    delete hub.verify_token
+                    delete access_token
+                }
+                request>headers>Authorization delete
+                request>headers>Cookie delete
+            }
+        }
+    }
+    @not_instagram not path /webhook/instagram-leads /webhook-test/instagram-leads
+    log_skip @not_instagram
+
+    # Serve generated JPEGs from a dedicated read-only volume, outside n8n.
+    # UUID filenames avoid collisions. Directory browsing remains disabled.
+    handle_path /studio-images/* {
+        root * /srv/studio-images
+        @jpeg path_regexp studioJpeg ^/[0-9a-fA-F-]+\.jpg$
+        handle @jpeg {
+            header Cache-Control "public, max-age=86400, immutable"
+            file_server
+        }
+        handle {
+            respond "Not found" 404
+        }
+    }
+
+    handle {
+        reverse_proxy n8n:5678 {
+            # Keep real-time node execution streaming & Server-Sent Events.
+            flush_interval -1
+        }
+    }
+
+    # Security headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-XSS-Protection "1; mode=block"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+
+    # Enable compression
+    encode zstd gzip
+}

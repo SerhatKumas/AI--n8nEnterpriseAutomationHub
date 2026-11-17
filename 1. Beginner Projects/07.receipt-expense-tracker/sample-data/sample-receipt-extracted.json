@@ -1,0 +1,27 @@
+{
+  "isReceipt": true,
+  "merchant": "Starbucks Coffee",
+  "date": "2026-11-04",
+  "totalAmount": 9.45,
+  "currency": "EUR",
+  "currencySymbol": "€",
+  "category": "Coffee & Snacks",
+  "itemsSummary": "Caramel Macchiato (Venti), Cinnamon Roll",
+  "items": [
+    {
+      "name": "Caramel Macchiato Venti",
+      "qty": 1,
+      "price": 5.95
+    },
+    {
+      "name": "Cinnamon Roll",
+      "qty": 1,
+      "price": 3.50
+    }
+  ],
+  "taxAmount": 0.62,
+  "paymentMethod": "Apple Pay (Visa ****1234)",
+  "confidence": 0.98,
+  "notes": "Legible thermal receipt with complete transaction summary."
+}
+

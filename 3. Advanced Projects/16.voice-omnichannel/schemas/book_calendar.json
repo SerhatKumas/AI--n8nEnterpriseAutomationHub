@@ -1,0 +1,32 @@
+{
+  "type": "function",
+  "function": {
+    "name": "book_appointment",
+    "description": "Creates an appointment in Google Calendar once caller verbally confirms date and time.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "customer_name": {
+          "type": "string",
+          "description": "Full name of the caller."
+        },
+        "customer_phone": {
+          "type": "string",
+          "description": "Caller phone number with country code."
+        },
+        "start_time": {
+          "type": "string",
+          "description": "ISO 8601 start time (e.g., 2026-11-18T14:00:00Z)."
+        },
+        "summary": {
+          "type": "string",
+          "description": "Reason or topic for the consultation."
+        }
+      },
+      "required": ["customer_name", "start_time", "summary"]
+    }
+  },
+  "server": {
+    "url": "https://n8n.codewaft.com/webhook/vapi-tools"
+  }
+}

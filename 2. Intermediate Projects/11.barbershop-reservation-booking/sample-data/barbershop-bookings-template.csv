@@ -1,0 +1,5 @@
+Booking ID,Date,Time Slot,Customer Name,Telegram User ID,Telegram Username,Service,Price,Status,Created At,Notes
+BKG-20261108-1011,2026-11-08,10:00,John Miller,987654321,@johnmiller,Classic Haircut & Styling,€35,Confirmed,2026-11-07T10:00:00Z,Customer booked via Telegram
+BKG-20261108-1012,2026-11-08,14:00,Marcus Weber,876543210,@mweber,The Royal Treatment,€55,Confirmed,2026-11-07T11:15:00Z,Regular VIP client
+BKG-20261108-1013,2026-11-08,16:00,David Klein,765432109,@dklein,Beard Sculpting & Hot Towel,€25,Cancelled by Customer,2026-11-07T12:00:00Z,Customer cancelled
+

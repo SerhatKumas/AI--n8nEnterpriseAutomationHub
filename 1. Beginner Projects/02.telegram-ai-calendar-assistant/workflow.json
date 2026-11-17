@@ -1,0 +1,1024 @@
+{
+  "name": "Personal AI Telegram Calendar Assistant & Reminders",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "telegram-trigger",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        100,
+        300
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "CONFIGURE_TELEGRAM_CREDENTIAL",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.message.text }}",
+        "options": {
+          "systemMessage": "=You are the friendly, proactive, and highly capable Personal AI Executive Assistant for Serhat Kumas.\nYour job is to manage Serhat's schedule, meetings, and calendar on Google Calendar through Telegram.\n\n📅 CURRENT DATE & TIME CONTEXT:\n- Current Date & Time: {{ $now.setZone('Europe/Berlin').toFormat('yyyy-MM-dd HH:mm (ZZ)') }}\n- Day of week: {{ $now.setZone('Europe/Berlin').toFormat('EEEE') }}\n- Timezone: Europe/Berlin (ALL meetings and times are strictly in Europe/Berlin time)\n\n📌 CORE OPERATING RULES:\n1. BERLIN TIMEZONE MANDATE:\n   - ALWAYS schedule and interpret all meeting times strictly in Berlin time (Europe/Berlin).\n   - When Serhat specifies a time like '3 PM' or 'saat 15:00', this ALWAYS refers to 15:00 Berlin time.\n   - In the JSON action block, ALWAYS format timestamps for start, end, newStart, and newEnd as Europe/Berlin ISO-8601 strings (e.g. YYYY-MM-DDTHH:mm:ss+02:00 or +01:00).\n   - In your conversational text, clearly state the time and specify that it is Berlin time (e.g. '15:00 - 15:30 (Berlin saati / Berlin time)').\n2. DEFAULT PLATFORM: We ALWAYS book through Google Calendar and we use Google Meet by default for virtual calls.\n3. EMAIL INVITES: When scheduling a new meeting, ALWAYS ask if Serhat would like to invite anyone by email, or if generating the Google Meet link will be enough. (Example: 'E-posta daveti göndermek istediğiniz biri var mı, yoksa Meet linki yeterli mi?')\n   - If Serhat says 'sadece link', 'gerek yok', 'no email', etc., proceed without attendees.\n   - If Serhat provides email(s), include them in the attendees list.\n4. NATURAL CONVERSATION & SLOT-FILLING:\n   - If required details (Title, Date, or Time) are missing or ambiguous, DO NOT guess or book yet. Ask polite, brief follow-up questions.\n   - Always reply in the user's language (Turkish, English, etc.).\n   - Keep Telegram messages concise, well-formatted with emojis and bullet points.\n\n🎯 SUPPORTED ACTIONS & STRICT JSON ACTION BLOCKS:\nAt the very end of your response, output a single JSON action code block when an action is ready:\n\n1. TO BOOK / CREATE A MEETING (when Title, Date, and Time are confirmed):\n```json:calendar_action\n{\n  \"action\": \"create\",\n  \"summary\": \"<Meeting Title>\",\n  \"start\": \"<YYYY-MM-DDTHH:mm:ssZZ>\",\n  \"end\": \"<YYYY-MM-DDTHH:mm:ssZZ>\",\n  \"description\": \"<Meeting Agenda / Description>\",\n  \"location\": \"Google Meet\",\n  \"attendees\": [\"email@example.com\"]\n}\n```\n\n2. TO VIEW / CHECK MEETINGS ON A GIVEN DATE (e.g. 'What meetings do I have tomorrow?', 'Show Friday schedule', 'Am I free on Oct 25?'):\n```json:calendar_action\n{\n  \"action\": \"get\",\n  \"targetDate\": \"<YYYY-MM-DD>\",\n  \"dateFormatted\": \"<e.g. Friday, 24 October 2026>\"\n}\n```\n\n3. TO CANCEL / DELETE A MEETING (e.g. 'Cancel my 3 PM meeting with Ahmet tomorrow'):\n```json:calendar_action\n{\n  \"action\": \"delete\",\n  \"query\": \"<search keyword like Ahmet or project title>\",\n  \"targetDate\": \"<YYYY-MM-DD>\"\n}\n```\n\n4. TO RESCHEDULE / MOVE A MEETING (e.g. 'Reschedule Ahmet call from tomorrow 3 PM to Friday 4 PM'):\n```json:calendar_action\n{\n  \"action\": \"update\",\n  \"query\": \"<search keyword for the existing meeting>\",\n  \"targetDate\": \"<original meeting date YYYY-MM-DD>\",\n  \"newStart\": \"<YYYY-MM-DDTHH:mm:ssZZ>\",\n  \"newEnd\": \"<YYYY-MM-DDTHH:mm:ssZZ>\"\n}\n```\n\n5. IF STILL ASKING QUESTIONS OR GENERAL CHATTING:\nDo NOT output any JSON code block. Simply reply naturally to Serhat."
+        }
+      },
+      "id": "calendar-ai-agent",
+      "name": "AI Calendar Assistant",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        360,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-3.5-flash",
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "id": "gemini-chat-model",
+      "name": "Google Gemini Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        300,
+        520
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "CONFIGURE_GEMINI_CREDENTIAL",
+          "name": "Google Gemini(PaLM) API account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('Telegram Trigger').item.json.message.chat.id.toString() }}",
+        "contextWindowLength": 12
+      },
+      "id": "window-memory",
+      "name": "Window Buffer Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        480,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rawOutput = $input.first().json.output || '';\nconst telegramInput = $('Telegram Trigger').first().json.message || {};\nconst chatId = telegramInput.chat?.id;\nconst messageId = telegramInput.message_id;\n\n// Helper to anchor any date/time strictly to Europe/Berlin\nfunction toBerlinISO(dateTimeStr) {\n  if (!dateTimeStr) return '';\n  try {\n    const clean = dateTimeStr.replace(/Z$/i, '').split('+')[0];\n    const dt = DateTime.fromISO(clean, { zone: 'Europe/Berlin' });\n    return dt.isValid ? dt.toISO() : dateTimeStr;\n  } catch (e) {\n    return dateTimeStr;\n  }\n}\n\n// Helper to get Berlin ISO range for a target date\nfunction getDateRange(dateStr) {\n  const target = dateStr || $now.setZone('Europe/Berlin').toFormat('yyyy-MM-dd');\n  try {\n    const dt = DateTime.fromISO(target, { zone: 'Europe/Berlin' });\n    return {\n      targetDate: target,\n      timeMin: dt.startOf('day').toISO(),\n      timeMax: dt.endOf('day').toISO()\n    };\n  } catch (e) {\n    return {\n      targetDate: target,\n      timeMin: target + 'T00:00:00+02:00',\n      timeMax: target + 'T23:59:59+02:00'\n    };\n  }\n}\n\n// Match JSON action block\nconst actionRegex = /```(?:json:calendar_action|json)\\s*([\\s\\S]*?)\\s*```/;\nconst match = rawOutput.match(actionRegex);\n\nif (match) {\n  try {\n    const data = JSON.parse(match[1]);\n    const cleanMessage = rawOutput.replace(actionRegex, '').trim();\n    const action = data.action || 'chat';\n\n    if (action === 'create' && data.summary && data.start) {\n      return [{\n        json: {\n          action: 'create',\n          chatId,\n          messageId,\n          replyText: cleanMessage,\n          summary: data.summary,\n          start: toBerlinISO(data.start),\n          end: toBerlinISO(data.end || data.start),\n          description: data.description || '',\n          location: data.location || 'Google Meet',\n          attendees: Array.isArray(data.attendees) ? data.attendees : []\n        }\n      }];\n    }\n\n    if (action === 'get') {\n      const range = getDateRange(data.targetDate);\n      return [{\n        json: {\n          action: 'get',\n          chatId,\n          messageId,\n          targetDate: range.targetDate,\n          dateFormatted: data.dateFormatted || range.targetDate,\n          timeMin: range.timeMin,\n          timeMax: range.timeMax\n        }\n      }];\n    }\n\n    if (action === 'delete') {\n      const range = getDateRange(data.targetDate);\n      return [{\n        json: {\n          action: 'delete',\n          chatId,\n          messageId,\n          query: data.query || '',\n          targetDate: range.targetDate,\n          timeMin: range.timeMin,\n          timeMax: range.timeMax\n        }\n      }];\n    }\n\n    if (action === 'update') {\n      const range = getDateRange(data.targetDate);\n      return [{\n        json: {\n          action: 'update',\n          chatId,\n          messageId,\n          query: data.query || '',\n          newStart: toBerlinISO(data.newStart),\n          newEnd: toBerlinISO(data.newEnd || data.newStart),\n          targetDate: range.targetDate,\n          timeMin: range.timeMin,\n          timeMax: range.timeMax\n        }\n      }];\n    }\n  } catch (e) {\n    // Parsing error fallback\n  }\n}\n\n// Fallback: conversational reply or asking clarifying questions\nreturn [{\n  json: {\n    action: 'chat',\n    chatId,\n    messageId,\n    replyText: rawOutput\n  }\n}];"
+      },
+      "id": "parse-ai-output",
+      "name": "Parse AI Intent & Action",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "chat",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "create",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "get",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "delete",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "update",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        }
+      },
+      "id": "switch-calendar-action",
+      "name": "Route by Action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.replyText }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "send-telegram-reply",
+      "name": "Send Telegram Reply (Question / Chat)",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1160,
+        140
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "CONFIGURE_TELEGRAM_CREDENTIAL",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "value": "primary",
+          "mode": "list",
+          "cachedResultName": "primary"
+        },
+        "start": "={{ $json.start }}",
+        "end": "={{ $json.end }}",
+        "additionalFields": {
+          "summary": "={{ $json.summary }}",
+          "description": "={{ $json.description }}",
+          "location": "={{ $json.location }}"
+        }
+      },
+      "id": "create-calendar-event",
+      "name": "Create Google Calendar Event",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.2,
+      "position": [
+        1160,
+        280
+      ],
+      "credentials": {
+        "googleCalendarOAuth2": {
+          "id": "CONFIGURE_GOOGLE_CALENDAR_CREDENTIAL",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Parse AI Intent & Action').first().json.chatId }}",
+        "text": "=✅ <b>Meeting Scheduled on Google Calendar!</b>\n\n📌 <b>Title:</b> {{ $json.summary }}\n📅 <b>Date:</b> {{ DateTime.fromISO($json.start.dateTime || $json.start.date).setZone('Europe/Berlin').toFormat('EEEE, dd MMMM yyyy') }}\n⏰ <b>Time:</b> {{ $json.start.dateTime ? (DateTime.fromISO($json.start.dateTime).setZone('Europe/Berlin').toFormat('HH:mm') + ' - ' + DateTime.fromISO($json.end.dateTime).setZone('Europe/Berlin').toFormat('HH:mm') + ' (Berlin Time)') : 'All Day' }}\n📍 <b>Location:</b> Google Meet\n🔗 <a href=\"{{ $json.htmlLink }}\">Open in Google Calendar</a>\n\n🔔 <i>I have noted this down and will send you a reminder on Telegram at 08:30 AM that day!</i>",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "send-telegram-confirmation",
+      "name": "Send Telegram Confirmation",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1400,
+        280
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "CONFIGURE_TELEGRAM_CREDENTIAL",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "value": "primary",
+          "mode": "list",
+          "cachedResultName": "primary"
+        },
+        "returnAll": true,
+        "options": {
+          "timeMin": "={{ $json.timeMin }}",
+          "timeMax": "={{ $json.timeMax }}",
+          "singleEvents": true,
+          "orderBy": "startTime"
+        }
+      },
+      "alwaysOutputData": true,
+      "id": "get-events-by-date",
+      "name": "Get Events by Date",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.2,
+      "position": [
+        1160,
+        420
+      ],
+      "credentials": {
+        "googleCalendarOAuth2": {
+          "id": "CONFIGURE_GOOGLE_CALENDAR_CREDENTIAL",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nlet meta = {};\ntry {\n  meta = $('Parse AI Intent & Action').first().json;\n} catch (e) {}\n\nlet telegramMsg = {};\ntry {\n  telegramMsg = $('Telegram Trigger').first().json.message || {};\n} catch (e) {}\n\nconst chatId = meta.chatId || telegramMsg.chat?.id;\nlet dateTitle = meta.dateFormatted || meta.targetDate || 'Selected Date';\nconst targetDate = meta.targetDate;\n\ntry {\n  if (targetDate) {\n    const dt = DateTime.fromISO(targetDate, { zone: 'Europe/Berlin' });\n    if (dt.isValid) {\n      dateTitle = dt.toFormat('EEEE, dd MMMM yyyy');\n    }\n  }\n} catch (e) {}\n\nconst userText = telegramMsg.text || '';\nconst isTurkish = /[çğıöşüÇĞİÖŞÜ]|(\\b(toplanti|toplantı|bugun|bugün|yarin|yarın|takvim|gun|gün|pazartesi|salı|çarşamba|perşembe|cuma|cumartesi|pazar|var|mi|mı|mu|mü|ne|neler|hangisi)\\b)/i.test(userText);\n\nfunction escapeHtml(str) {\n  if (!str) return '';\n  return String(str)\n    .replace(/&/g, '&amp;')\n    .replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;');\n}\n\nconst hasValidEvents = items && items.length > 0 && items[0].json && items[0].json.id;\n\nif (!hasValidEvents) {\n  const emptyMsg = isTurkish\n    ? `📅 <b>${escapeHtml(dateTitle)} için Takviminiz (Berlin Saati):</b>\\n\\n✨ Bu tarihte planlanmış herhangi bir toplantınız bulunmuyor. Gününüz tamamen boş! 🎉`\n    : `📅 <b>Schedule for ${escapeHtml(dateTitle)} (Berlin Time):</b>\\n\\n✨ You do not have any meetings scheduled on this day. You are completely free! 🎉`;\n\n  return [{\n    json: {\n      chatId,\n      messageText: emptyMsg\n    }\n  }];\n}\n\nlet msg = isTurkish\n  ? `📅 <b>${escapeHtml(dateTitle)} Toplantılarınız (${items.length} adet) [Berlin Saati]:</b>\\n\\n`\n  : `📅 <b>Meetings on ${escapeHtml(dateTitle)} (${items.length} total) [Berlin Time]:</b>\\n\\n`;\n\nfor (let i = 0; i < items.length; i++) {\n  const ev = items[i].json;\n  const summary = escapeHtml(ev.summary || (isTurkish ? 'Başlıksız Toplantı' : 'Untitled Event'));\n  let timeStr = isTurkish ? 'Tüm Gün' : 'All Day';\n  if (ev.start?.dateTime) {\n    try {\n      const sDt = DateTime.fromISO(ev.start.dateTime).setZone('Europe/Berlin');\n      const eDt = ev.end?.dateTime ? DateTime.fromISO(ev.end.dateTime).setZone('Europe/Berlin') : null;\n      const s = sDt.toFormat('HH:mm');\n      const e = eDt ? eDt.toFormat('HH:mm') : '';\n      timeStr = e ? `${s} - ${e} (Berlin)` : `${s} (Berlin)`;\n    } catch (err) {\n      const s = ev.start.dateTime.substring(11, 16);\n      const e = ev.end?.dateTime ? ev.end.dateTime.substring(11, 16) : '';\n      timeStr = e ? `${s} - ${e} (Berlin)` : s;\n    }\n  }\n  \n  const loc = ev.location ? ` | 📍 <i>${escapeHtml(ev.location)}</i>` : ' | 📍 <i>Google Meet</i>';\n  const linkText = isTurkish ? 'Takvim' : 'Calendar';\n  const link = ev.htmlLink ? ` (<a href=\"${ev.htmlLink}\">${linkText}</a>)` : '';\n  \n  msg += `${i + 1}. ⏰ <b>${timeStr}</b> — <b>${summary}</b>${loc}${link}\\n`;\n  if (ev.description) {\n    const desc = escapeHtml(ev.description.substring(0, 100));\n    msg += `   📝 <i>${desc}</i>\\n`;\n  }\n  msg += `\\n`;\n}\n\nreturn [{\n  json: {\n    chatId,\n    messageText: msg\n  }\n}];"
+      },
+      "id": "format-day-events",
+      "name": "Format Day Events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.messageText }}",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "send-telegram-day-events",
+      "name": "Send Telegram Day Schedule",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1640,
+        420
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "CONFIGURE_TELEGRAM_CREDENTIAL",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "value": "primary",
+          "mode": "list",
+          "cachedResultName": "primary"
+        },
+        "returnAll": true,
+        "options": {
+          "timeMin": "={{ $json.timeMin }}",
+          "timeMax": "={{ $json.timeMax }}",
+          "query": "={{ $json.query }}",
+          "singleEvents": true
+        }
+      },
+      "alwaysOutputData": true,
+      "id": "search-event-to-delete",
+      "name": "Search Event to Delete",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.2,
+      "position": [
+        1160,
+        560
+      ],
+      "credentials": {
+        "googleCalendarOAuth2": {
+          "id": "CONFIGURE_GOOGLE_CALENDAR_CREDENTIAL",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst meta = $('Parse AI Intent & Action').first().json;\n\nif (!items || items.length === 0 || !items[0].json || !items[0].json.id) {\n  return [{\n    json: {\n      found: false,\n      chatId: meta.chatId,\n      query: meta.query,\n      targetDate: meta.targetDate\n    }\n  }];\n}\n\n// Take the best matching event\nconst target = items[0].json;\nreturn [{\n  json: {\n    found: true,\n    chatId: meta.chatId,\n    eventId: target.id,\n    summary: target.summary || 'Meeting',\n    start: target.start?.dateTime || target.start?.date || ''\n  }\n}];"
+      },
+      "id": "prepare-delete-match",
+      "name": "Prepare Delete Match",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "event-found",
+              "leftValue": "={{ $json.found }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-event-found-to-delete",
+      "name": "Event Found to Delete?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1640,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "delete",
+        "calendar": {
+          "__rl": true,
+          "value": "primary",
+          "mode": "list",
+          "cachedResultName": "primary"
+        },
+        "eventId": "={{ $json.eventId }}"
+      },
+      "id": "delete-calendar-event",
+      "name": "Delete Google Calendar Event",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.2,
+      "position": [
+        1880,
+        520
+      ],
+      "credentials": {
+        "googleCalendarOAuth2": {
+          "id": "CONFIGURE_GOOGLE_CALENDAR_CREDENTIAL",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Prepare Delete Match').first().json.chatId }}",
+        "text": "=🗑️ *Meeting Cancelled & Deleted!*\n\nSuccessfully removed *{{ $('Prepare Delete Match').first().json.summary }}* from your Google Calendar.",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "send-telegram-delete-confirm",
+      "name": "Send Delete Confirmation",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2120,
+        520
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "CONFIGURE_TELEGRAM_CREDENTIAL",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "=⚠️ *Meeting Not Found*\n\nI couldn't find any meeting matching *\"{{ $json.query }}\"* on {{ $json.targetDate }}. Please verify the title or date.",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "send-telegram-delete-failed",
+      "name": "Send Delete Not Found",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1880,
+        640
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "CONFIGURE_TELEGRAM_CREDENTIAL",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "value": "primary",
+          "mode": "list",
+          "cachedResultName": "primary"
+        },
+        "returnAll": true,
+        "options": {
+          "timeMin": "={{ $json.timeMin }}",
+          "timeMax": "={{ $json.timeMax }}",
+          "query": "={{ $json.query }}",
+          "singleEvents": true
+        }
+      },
+      "alwaysOutputData": true,
+      "id": "search-event-to-update",
+      "name": "Search Event to Update",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.2,
+      "position": [
+        1160,
+        740
+      ],
+      "credentials": {
+        "googleCalendarOAuth2": {
+          "id": "CONFIGURE_GOOGLE_CALENDAR_CREDENTIAL",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst meta = $('Parse AI Intent & Action').first().json;\n\nif (!items || items.length === 0 || !items[0].json || !items[0].json.id) {\n  return [{\n    json: {\n      found: false,\n      chatId: meta.chatId,\n      query: meta.query,\n      targetDate: meta.targetDate\n    }\n  }];\n}\n\nconst target = items[0].json;\nreturn [{\n  json: {\n    found: true,\n    chatId: meta.chatId,\n    eventId: target.id,\n    summary: target.summary || 'Meeting',\n    newStart: meta.newStart,\n    newEnd: meta.newEnd\n  }\n}];"
+      },
+      "id": "prepare-update-match",
+      "name": "Prepare Update Match",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        740
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "event-found-update",
+              "leftValue": "={{ $json.found }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-event-found-to-update",
+      "name": "Event Found to Update?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1640,
+        740
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "calendar": {
+          "__rl": true,
+          "value": "primary",
+          "mode": "list",
+          "cachedResultName": "primary"
+        },
+        "eventId": "={{ $json.eventId }}",
+        "updateFields": {
+          "start": "={{ $json.newStart }}",
+          "end": "={{ $json.newEnd }}"
+        }
+      },
+      "id": "update-calendar-event",
+      "name": "Update Google Calendar Event",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.2,
+      "position": [
+        1880,
+        700
+      ],
+      "credentials": {
+        "googleCalendarOAuth2": {
+          "id": "CONFIGURE_GOOGLE_CALENDAR_CREDENTIAL",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Prepare Update Match').first().json.chatId }}",
+        "text": "=🔄 <b>Meeting Rescheduled Successfully!</b>\n\n📌 <b>Title:</b> {{ $json.summary }}\n📅 <b>New Date:</b> {{ DateTime.fromISO($json.start.dateTime || $json.start.date).setZone('Europe/Berlin').toFormat('EEEE, dd MMMM yyyy') }}\n⏰ <b>New Time:</b> {{ $json.start.dateTime ? (DateTime.fromISO($json.start.dateTime).setZone('Europe/Berlin').toFormat('HH:mm') + ' - ' + DateTime.fromISO($json.end.dateTime).setZone('Europe/Berlin').toFormat('HH:mm') + ' (Berlin Time)') : 'All Day' }}\n📍 <b>Location:</b> Google Meet\n🔗 <a href=\"{{ $json.htmlLink }}\">Open in Google Calendar</a>",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "send-telegram-update-confirm",
+      "name": "Send Reschedule Confirmation",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2120,
+        700
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "CONFIGURE_TELEGRAM_CREDENTIAL",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "=⚠️ *Meeting Not Found to Reschedule*\n\nI couldn't find any meeting matching *\"{{ $json.query }}\"* on {{ $json.targetDate }}. Please verify the meeting title or original date.",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "send-telegram-update-failed",
+      "name": "Send Update Not Found",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1880,
+        820
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "CONFIGURE_TELEGRAM_CREDENTIAL",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 8 * * *"
+            }
+          ]
+        }
+      },
+      "id": "daily-morning-check",
+      "name": "Daily Morning Check (08:30 AM Berlin)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        100,
+        1000
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "value": "primary",
+          "mode": "list",
+          "cachedResultName": "primary"
+        },
+        "returnAll": true,
+        "options": {
+          "timeMin": "={{ $now.startOf('day').toISO() }}",
+          "timeMax": "={{ $now.endOf('day').toISO() }}",
+          "singleEvents": true,
+          "orderBy": "startTime"
+        }
+      },
+      "alwaysOutputData": true,
+      "id": "get-today-events",
+      "name": "Get Today's Calendar Events",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.2,
+      "position": [
+        360,
+        1000
+      ],
+      "credentials": {
+        "googleCalendarOAuth2": {
+          "id": "CONFIGURE_GOOGLE_CALENDAR_CREDENTIAL",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nfunction escapeHtml(str) {\n  if (!str) return '';\n  return String(str)\n    .replace(/&/g, '&amp;')\n    .replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;');\n}\n\nconst todayFormatted = $now.setZone('Europe/Berlin').toFormat('EEEE, dd MMMM yyyy');\nconst chatId = '1519369571';\n\nconst hasValidEvents = items && items.length > 0 && items[0].json && items[0].json.id;\n\nif (!hasValidEvents) {\n  const emptyReminder = `🔔 <b>Günaydın Serhat! (Berlin Saati)</b>\\n\\n📅 <i>${escapeHtml(todayFormatted)}</i>\\n\\n✨ Bugün için takviminizde planlanmış herhangi bir toplantı bulunmuyor. Gününüz tamamen boş! Harika ve verimli bir gün dilerim! 🚀`;\n  return [{\n    json: {\n      hasEvents: false,\n      eventCount: 0,\n      chatId,\n      reminderText: emptyReminder\n    }\n  }];\n}\n\nlet reminder = `🔔 <b>Bugünkü Toplantı Özeti (${escapeHtml(todayFormatted)}) [Berlin Saati]</b>\\n\\n`;\nreminder += `Bugün için planlanmış <b>${items.length}</b> adet toplantınız var:\\n\\n`;\n\nfor (let i = 0; i < items.length; i++) {\n  const ev = items[i].json;\n  const title = escapeHtml(ev.summary || 'Başlıksız Toplantı');\n  let timeStr = 'Tüm Gün';\n  if (ev.start?.dateTime) {\n    try {\n      const sDt = DateTime.fromISO(ev.start.dateTime).setZone('Europe/Berlin');\n      const eDt = ev.end?.dateTime ? DateTime.fromISO(ev.end.dateTime).setZone('Europe/Berlin') : null;\n      const s = sDt.toFormat('HH:mm');\n      const e = eDt ? eDt.toFormat('HH:mm') : '';\n      timeStr = e ? `${s} - ${e} (Berlin)` : `${s} (Berlin)`;\n    } catch (err) {\n      const s = ev.start.dateTime.substring(11, 16);\n      const e = ev.end?.dateTime ? ev.end.dateTime.substring(11, 16) : '';\n      timeStr = e ? `${s} - ${e} (Berlin)` : s;\n    }\n  }\n  \n  const loc = ev.location ? ` | 📍 <i>${escapeHtml(ev.location)}</i>` : ' | 📍 <i>Google Meet</i>';\n  const link = ev.htmlLink ? ` (<a href=\"${ev.htmlLink}\">Takvim Bağlantısı</a>)` : '';\n  \n  reminder += `${i + 1}. ⏰ <b>${timeStr}</b> — <b>${title}</b>${loc}${link}\\n`;\n  if (ev.description) {\n    reminder += `   📝 <i>${escapeHtml(ev.description.substring(0, 120))}</i>\\n`;\n  }\n  reminder += `\\n`;\n}\n\nreminder += `Harika ve verimli bir gün dilerim! 🚀`;\n\nreturn [{\n  json: {\n    hasEvents: true,\n    eventCount: items.length,\n    chatId,\n    reminderText: reminder\n  }\n}];"
+      },
+      "id": "format-today-agenda",
+      "name": "Format Today's Agenda",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        1000
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $vars.TELEGRAM_MY_CHAT_ID || $json.chatId || '1519369571' }}",
+        "text": "={{ $json.reminderText }}",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "send-today-reminder",
+      "name": "Send Today Meeting Reminder",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        880,
+        1000
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "CONFIGURE_TELEGRAM_CREDENTIAL",
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "AI Calendar Assistant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Calendar Assistant",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Window Buffer Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Calendar Assistant",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Calendar Assistant": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Intent & Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Intent & Action": {
+      "main": [
+        [
+          {
+            "node": "Route by Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Action": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Reply (Question / Chat)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Google Calendar Event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Events by Date",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Search Event to Delete",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Search Event to Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Google Calendar Event": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Events by Date": {
+      "main": [
+        [
+          {
+            "node": "Format Day Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Day Events": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Day Schedule",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Event to Delete": {
+      "main": [
+        [
+          {
+            "node": "Prepare Delete Match",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Delete Match": {
+      "main": [
+        [
+          {
+            "node": "Event Found to Delete?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Event Found to Delete?": {
+      "main": [
+        [
+          {
+            "node": "Delete Google Calendar Event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Delete Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete Google Calendar Event": {
+      "main": [
+        [
+          {
+            "node": "Send Delete Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Event to Update": {
+      "main": [
+        [
+          {
+            "node": "Prepare Update Match",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Update Match": {
+      "main": [
+        [
+          {
+            "node": "Event Found to Update?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Update Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Event Found to Update?": {
+      "main": [
+        [
+          {
+            "node": "Update Google Calendar Event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Update Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Google Calendar Event": {
+      "main": [
+        [
+          {
+            "node": "Send Reschedule Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily Morning Check (08:30 AM Berlin)": {
+      "main": [
+        [
+          {
+            "node": "Get Today's Calendar Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Today's Calendar Events": {
+      "main": [
+        [
+          {
+            "node": "Format Today's Agenda",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Today's Agenda": {
+      "main": [
+        [
+          {
+            "node": "Send Today Meeting Reminder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Berlin"
+  }
+}

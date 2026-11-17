@@ -1,0 +1,51 @@
+{
+  "stitch_provider": "shotstack",
+  "endpoint": "https://api.shotstack.io/v1/render",
+  "payload": {
+    "timeline": {
+      "soundtrack": {
+        "src": "https://api.elevenlabs.io/v1/history/sample_audio.mp3",
+        "effect": "fadeInFadeOut"
+      },
+      "tracks": [
+        {
+          "clips": [
+            {
+              "asset": {
+                "type": "title",
+                "text": "Stop writing prompts.\nBuild swarms instead.",
+                "style": "chunk",
+                "color": "#FFE500",
+                "background": "rgba(0, 0, 0, 0.7)",
+                "size": "medium",
+                "position": "middle"
+              },
+              "start": 0,
+              "length": 32.0
+            }
+          ]
+        },
+        {
+          "clips": [
+            {
+              "asset": {
+                "type": "video",
+                "src": "https://replicate.delivery/pbxt/kK4xL9z1/output.mp4",
+                "volume": 0.0
+              },
+              "start": 0,
+              "length": 32.0,
+              "fit": "cover"
+            }
+          ]
+        }
+      ]
+    },
+    "output": {
+      "format": "mp4",
+      "resolution": "1080",
+      "aspectRatio": "9:16",
+      "fps": 30
+    }
+  }
+}

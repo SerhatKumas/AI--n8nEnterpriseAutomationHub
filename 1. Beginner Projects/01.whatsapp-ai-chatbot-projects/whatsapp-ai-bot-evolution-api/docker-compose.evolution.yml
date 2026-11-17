@@ -1,0 +1,64 @@
+services:
+  evolution_postgres:
+    image: postgres:15-alpine
+    container_name: evolution_postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=evolution
+      - POSTGRES_PASSWORD=${EVOLUTION_POSTGRES_PASSWORD:?Set EVOLUTION_POSTGRES_PASSWORD in .env}
+      - POSTGRES_DB=evolution
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evolution -d evolution"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - evolution_pgdata:/var/lib/postgresql/data
+    networks:
+      - n8n_network
+
+  evolution_api:
+    image: evoapicloud/evolution-api:v2.3.7
+    container_name: evolution_api
+    restart: unless-stopped
+    depends_on:
+      evolution_postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      - SERVER_URL=http://localhost:8080
+      - AUTHENTICATION_API_KEY=${EVOLUTION_API_KEY:?Set EVOLUTION_API_KEY in .env}
+      - AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES=false
+      # Database Connection (Postgres via Prisma)
+      - DATABASE_PROVIDER=postgresql
+      - DATABASE_CONNECTION_URI=postgresql://evolution:${EVOLUTION_POSTGRES_PASSWORD:?Set EVOLUTION_POSTGRES_PASSWORD in .env}@evolution_postgres:5432/evolution?schema=public
+      - DATABASE_SAVE_DATA_INSTANCE=true
+      - DATABASE_SAVE_DATA_NEW_MESSAGE=true
+      - DATABASE_SAVE_MESSAGE_UPDATE=true
+      - DATABASE_SAVE_DATA_CONTACTS=true
+      - DATABASE_SAVE_DATA_CHATS=true
+      # Redis cache (optional, set to false for simplicity)
+      - CACHE_REDIS_ENABLED=false
+      # Verified on 2026-10-19; refresh this version if WhatsApp pairing changes.
+      - CONFIG_SESSION_PHONE_VERSION=${WHATSAPP_WEB_VERSION:-2.3000.1043857760}
+      - CONFIG_SESSION_PHONE_CLIENT=Escape Towns
+      # Session metadata
+      - QRCODE_LIMIT=60
+      - LOG_LEVEL=ERROR,WARN,INFO
+      - LOG_COLOR=true
+    volumes:
+      - evolution_instances:/evolution/instances
+    networks:
+      - n8n_network
+
+volumes:
+  evolution_instances:
+    name: evolution_instances
+  evolution_pgdata:
+    name: evolution_pgdata
+
+networks:
+  n8n_network:
+    name: n8n_network
+    external: true

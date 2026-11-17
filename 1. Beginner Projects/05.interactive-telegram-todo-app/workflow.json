@@ -1,0 +1,1410 @@
+{
+  "name": "Interactive Telegram To-Do App (Google Tasks)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * *"
+            }
+          ]
+        }
+      },
+      "id": "schedule-morning-todo",
+      "name": "Daily Morning Trigger (08:00 AM Berlin)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        100,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "updates": [
+          "message",
+          "callback_query"
+        ],
+        "additionalFields": {}
+      },
+      "id": "telegram-bot-trigger",
+      "name": "Telegram Bot Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        100,
+        480
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "1YPB2RqCCOaGdDCL",
+          "name": "Daily To Do App Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// =========================================================================\n// 🧭 ROUTE & PARSE INCOMING EVENT (Text, Voice Note, Callback, or Morning Cron)\n// =========================================================================\nconst input = $input.first()?.json || {};\nconst DEFAULT_CHAT_ID = '1519369571'; // Serhat Kumas Telegram Chat ID\n\n// 1. Scheduled 08:00 AM morning cron -> direct list_tasks\nconst isScheduled = Boolean(input.timestamp && !input.message && !input.callback_query);\nif (isScheduled) {\n  return [{\n    json: {\n      route: 'list_tasks',\n      triggerSource: 'scheduled_morning',\n      chatId: DEFAULT_CHAT_ID,\n      isCallback: false,\n      isMorningBriefing: true,\n      todayFormatted: $now.setZone('Europe/Berlin').toFormat('EEEE, dd MMMM yyyy'),\n      timeFormatted: $now.setZone('Europe/Berlin').toFormat('HH:mm')\n    }\n  }];\n}\n\n// 2. Telegram callback button click -> direct action\nif (input.callback_query) {\n  const cq = input.callback_query;\n  const callbackId = cq.id;\n  const data = cq.data || '';\n  const chatId = String(cq.message?.chat?.id || cq.from?.id || DEFAULT_CHAT_ID);\n  const messageId = cq.message?.message_id;\n  const originalText = cq.message?.text || '';\n\n  let route = 'help';\n  let taskId = '';\n\n  if (data.startsWith('done:')) {\n    route = 'mark_done';\n    taskId = data.substring(5);\n  } else if (data.startsWith('del:')) {\n    route = 'delete_task';\n    taskId = data.substring(4);\n  } else if (data === 'list' || data === 'refresh') {\n    route = 'list_tasks';\n  } else if (data === 'help') {\n    route = 'help';\n  }\n\n  return [{\n    json: {\n      route,\n      isCallback: true,\n      callbackId,\n      callbackData: data,\n      taskId,\n      chatId,\n      messageId,\n      originalText,\n      triggerSource: 'telegram_callback',\n      todayFormatted: $now.setZone('Europe/Berlin').toFormat('EEEE, dd MMMM yyyy'),\n      timeFormatted: $now.setZone('Europe/Berlin').toFormat('HH:mm')\n    }\n  }];\n}\n\n// 3. Telegram Message: Text or Voice Note\nconst msg = input.message || {};\nconst chatId = String(msg.chat?.id || msg.from?.id || DEFAULT_CHAT_ID);\n\n// 3a. Voice Note / Audio Message -> route to voice transcription\nif (msg.voice || msg.audio) {\n  const fileId = (msg.voice || msg.audio).file_id;\n  return [{\n    json: {\n      route: 'voice_transcribe',\n      fileId,\n      chatId,\n      isVoice: true,\n      triggerSource: 'telegram_voice',\n      todayFormatted: $now.setZone('Europe/Berlin').toFormat('EEEE, dd MMMM yyyy'),\n      timeFormatted: $now.setZone('Europe/Berlin').toFormat('HH:mm')\n    }\n  }];\n}\n\n// 3b. Regular Text Message: Check fast-path vs AI evaluation\nconst text = (msg.text || '').trim();\nlet route = 'ai_eval';\n\nif (/^\\/(start|help)$/i.test(text)) {\n  route = 'help';\n} else if (/^\\/(tasks|list|todo)$/i.test(text) || /^(tasks|list)$/i.test(text)) {\n  route = 'list_tasks';\n}\n\nreturn [{\n  json: {\n    route,\n    isCallback: false,\n    chatId,\n    rawText: text,\n    taskTitle: text,\n    triggerSource: 'telegram_message',\n    todayFormatted: $now.setZone('Europe/Berlin').toFormat('EEEE, dd MMMM yyyy'),\n    timeFormatted: $now.setZone('Europe/Berlin').toFormat('HH:mm')\n  }\n}];"
+      },
+      "id": "route-and-parse-event",
+      "name": "Route & Parse Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        360,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "ai_eval",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "mark_done",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "delete_task",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "list_tasks",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "help",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "voice_transcribe",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        }
+      },
+      "id": "router-switch",
+      "name": "Action Router Switch",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        620,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "operation": "get",
+        "fileId": "={{ $json.fileId }}",
+        "download": true
+      },
+      "id": "telegram-download-voice",
+      "name": "Telegram: Download Voice File",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        880,
+        560
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "1YPB2RqCCOaGdDCL",
+          "name": "Daily To Do App Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Read the actual bytes through n8n's storage-aware helper.\n// $binary.data.data may be empty or a storage marker, not Base64.\nconst items = $input.all();\nconst output = [];\n\nfor (let i = 0; i < items.length; i++) {\n  const item = items[i];\n  if (!item.binary?.data) {\n    throw new Error('No audio binary found in \"data\". Enable Download in Telegram: Download Voice File and run that node again.');\n  }\n\n  const buffer = await this.helpers.getBinaryDataBuffer(i, 'data');\n  if (!buffer.length) {\n    throw new Error('Downloaded audio is empty. Download the Telegram voice file again before transcribing.');\n  }\n\n  output.push({\n    json: {\n      ...item.json,\n      audioMimeType: item.binary.data.mimeType || 'audio/ogg',\n      audioBase64: buffer.toString('base64'),\n    },\n    pairedItem: { item: i },\n  });\n}\n\nreturn output;"
+      },
+      "id": "prepare-voice-audio",
+      "name": "Prepare Voice Audio",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [\n    {\n      \"parts\": [\n        {\n          \"text\": \"Listen carefully to this user voice recording. Transcribe the spoken speech verbatim in the original language spoken (e.g. English, Turkish, German). Return ONLY the transcription text, without any quotes or explanations.\"\n        },\n        {\n          \"inlineData\": {\n            \"mimeType\": \"{{ $json.audioMimeType }}\",\n            \"data\": \"{{ $json.audioBase64 }}\"\n          }\n        }\n      ]\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "gemini-transcribe-audio",
+      "name": "Gemini: Transcribe Voice Note",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1360,
+        560
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "zvLpU1ScjMCeOYQq",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "retryOnFail": false,
+      "notes": "Attempt 1 of 3. On error, wait 30 seconds before retrying. Successful responses go directly to Extract Voice Transcription."
+    },
+    {
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 30,
+        "unit": "seconds"
+      },
+      "id": "wait-voice-retry-30s",
+      "name": "Wait 30s Before Voice Retry",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1360,
+        1120
+      ],
+      "webhookId": "cb57cc89-18c4-42ab-a451-55e6f9729c1c"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [\n    {\n      \"parts\": [\n        {\n          \"text\": \"Listen carefully to this user voice recording. Transcribe the spoken speech verbatim in the original language spoken (e.g. English, Turkish, German). Return ONLY the transcription text, without any quotes or explanations.\"\n        },\n        {\n          \"inlineData\": {\n            \"mimeType\": \"{{ $('Prepare Voice Audio').item.json.audioMimeType }}\",\n            \"data\": \"{{ $('Prepare Voice Audio').item.json.audioBase64 }}\"\n          }\n        }\n      ]\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "gemini-transcribe-audio-attempt-2",
+      "name": "Gemini: Transcribe Voice Note (Attempt 2)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1600,
+        1120
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "zvLpU1ScjMCeOYQq",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "retryOnFail": false,
+      "notes": "Attempt 2 of 3. Reuses the linked audio from Prepare Voice Audio because the error output contains error details, not the audio payload. On error, wait another 60 seconds."
+    },
+    {
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 60,
+        "unit": "seconds"
+      },
+      "id": "wait-voice-retry-60s",
+      "name": "Wait 60s Before Voice Retry",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1840,
+        1120
+      ],
+      "webhookId": "488941a8-509b-4380-87b2-62dc009d57c0"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [\n    {\n      \"parts\": [\n        {\n          \"text\": \"Listen carefully to this user voice recording. Transcribe the spoken speech verbatim in the original language spoken (e.g. English, Turkish, German). Return ONLY the transcription text, without any quotes or explanations.\"\n        },\n        {\n          \"inlineData\": {\n            \"mimeType\": \"{{ $('Prepare Voice Audio').item.json.audioMimeType }}\",\n            \"data\": \"{{ $('Prepare Voice Audio').item.json.audioBase64 }}\"\n          }\n        }\n      ]\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "gemini-transcribe-audio-attempt-3",
+      "name": "Gemini: Transcribe Voice Note (Attempt 3)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2080,
+        1120
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "zvLpU1ScjMCeOYQq",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "retryOnFail": false,
+      "notes": "Attempt 3 of 3. Reuses the linked audio from Prepare Voice Audio because the error output contains error details, not the audio payload. On error, send the user a try-later message and stop this branch."
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Route & Parse Event').first().json.chatId }}",
+        "text": "Sorry, I couldn't transcribe your voice message after three attempts. Please try again later, or send your request as text.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "telegram-voice-transcription-unavailable",
+      "name": "Telegram: Voice Transcription Unavailable",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2320,
+        1120
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "1YPB2RqCCOaGdDCL",
+          "name": "Daily To Do App Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// =========================================================================\n// 🎙️ EXTRACT TRANSCRIBED TEXT FROM GEMINI RESPONSE\n// =========================================================================\nconst response = $input.first()?.json || {};\nconst transcribedText = response.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';\nconst routeMeta = $('Route & Parse Event').first().json;\nconst chatId = routeMeta.chatId;\nconst timeFormatted = routeMeta.timeFormatted;\n\nif (!transcribedText || transcribedText.length === 0) {\n  return [{\n    json: {\n      action: 'help',\n      chatId,\n      rawText: 'help',\n      timeFormatted,\n      isVoice: true\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    route: 'ai_eval',\n    chatId,\n    rawText: transcribedText,\n    taskTitle: transcribedText,\n    timeFormatted,\n    isVoice: true\n  }\n}];"
+      },
+      "id": "extract-voice-text",
+      "name": "Extract Voice Transcription",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.rawText || $json.taskTitle }}",
+        "options": {
+          "systemMessage": "You are the intelligent AI Assistant for a personal To-Do & Task Management App on Telegram.\nCurrent Context: Europe/Berlin Time: {{ $now.setZone('Europe/Berlin').toFormat('yyyy-MM-dd HH:mm') }}\n\nYOUR GOAL:\nClassify the user's message intent and handle tasks intelligently.\n\n1. INTENT \"list_tasks\":\n   - The user asks to VIEW, SEE, CHECK, or LIST their tasks.\n   - Examples:\n     * \"Can you show my to do list, lets see what I have on the list?\"\n     * \"What do I have to do today?\"\n     * \"Show my tasks\"\n     * \"List my active tasks\"\n     * \"Bugün neler yapmam gerekiyor?\"\n     * \"Görevlerimi göster\", \"Listemde ne var?\", \"Yapılacaklar listem\"\n   - Output:\n     { \"action\": \"list_tasks\", \"tasks\": [] }\n\n2. INTENT \"help\":\n   - The user asks what the bot does, asks for instructions, or sends a general greeting.\n   - Examples: \"help\", \"how do you work?\", \"ne yapabilirsin?\", \"merhaba\"\n   - Output:\n     { \"action\": \"help\", \"tasks\": [] }\n\n3. INTENT \"create_task\":\n   - The user wants to ADD, SCHEDULE, REMEMBER, or RECORD one or multiple tasks.\n   - Examples:\n     * \"Call investor tomorrow at 3pm\"\n     * \"train passau 4.24, buy groceries, send pitch deck\"\n     * \"1- review proposal 2- email accountant 3- gym\"\n     * \"Yarın 15:00 toplantı hazırla ve faturayı gönder\"\n   - Refinement rules for each task:\n     * Correct all typos, shorthand, and grammar (e.g. 'train passau 4.24' -> 'Take train to Passau at 4:24 PM').\n     * Make each title clear, professional, and action-oriented.\n     * STRICT CONSTRAINT: Keep titles SHORT and PUNCHY (typically 3 to 8 words). NEVER generate long paragraphs.\n     * If multiple tasks are mentioned, split them into separate items in the \"tasks\" array.\n     * Match user language (English, Turkish, German, etc.).\n   - Output:\n     {\n       \"action\": \"create_task\",\n       \"tasks\": [\n         { \"title\": \"Refined Short Task Title 1\", \"notes\": \"\" },\n         { \"title\": \"Refined Short Task Title 2\", \"notes\": \"\" }\n       ]\n     }\n\nSTRICT OUTPUT FORMAT:\nYou MUST output ONLY a valid JSON object wrapped inside a markdown code block:\n```json\n{\n  \"action\": \"list_tasks\" | \"create_task\" | \"help\",\n  \"tasks\": [\n    {\n      \"title\": \"Short Task Title\",\n      \"notes\": \"\"\n    }\n  ]\n}\n```\nDo NOT include any explanations or conversation outside the JSON block."
+        }
+      },
+      "id": "ai-task-refiner",
+      "name": "AI Task & Intent Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        920,
+        140
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-3.1-flash-lite",
+        "options": {
+          "temperature": 0.2
+        }
+      },
+      "id": "gemini-model-refiner",
+      "name": "Google Gemini Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        920,
+        320
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "zvLpU1ScjMCeOYQq",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// =========================================================================\n// 🧩 PARSE AI INTENT & SPLIT TASKS\n// =========================================================================\nconst aiInput = $input.first()?.json || {};\nconst rawOutput = aiInput.output || aiInput.text || '';\nconst routeMeta = $('Route & Parse Event').first().json;\nconst chatId = routeMeta.chatId;\nconst timeFormatted = routeMeta.timeFormatted;\nconst fallbackTitle = routeMeta.rawText || routeMeta.taskTitle || 'New Task';\n\nlet action = 'create_task';\nlet tasks = [];\n\n// Extract JSON block from AI output\nconst jsonMatch = rawOutput.match(/```(?:json)?\\s*([\\s\\S]*?)\\s*```/) || [null, rawOutput];\ntry {\n  const parsed = JSON.parse(jsonMatch[1].trim());\n  if (parsed && parsed.action) {\n    action = parsed.action;\n  }\n  if (Array.isArray(parsed.tasks) && parsed.tasks.length > 0) {\n    tasks = parsed.tasks.filter(t => t && t.title && t.title.trim().length > 0);\n  }\n} catch (e) {\n  // Graceful keyword fallback if parsing fails:\n  const lower = rawOutput.toLowerCase() + ' ' + fallbackTitle.toLowerCase();\n  if (lower.includes('show') || lower.includes('list') || lower.includes('göster') || lower.includes('neler var')) {\n    action = 'list_tasks';\n  } else if (lower.includes('help') || lower.includes('yardım')) {\n    action = 'help';\n  } else {\n    action = 'create_task';\n    const lines = (fallbackTitle.includes(',') ? fallbackTitle.split(',') : fallbackTitle.split('\\n'))\n      .map(l => l.replace(/^[-*•\\d.]+\\s*/, '').trim())\n      .filter(l => l.length > 0 && !l.startsWith('{') && !l.startsWith('['));\n    tasks = lines.map(title => ({ title, notes: '' }));\n  }\n}\n\n// Case 1: list_tasks intent\nif (action === 'list_tasks') {\n  return [{\n    json: {\n      action: 'list_tasks',\n      chatId,\n      timeFormatted\n    }\n  }];\n}\n\n// Case 2: help intent\nif (action === 'help') {\n  return [{\n    json: {\n      action: 'help',\n      chatId,\n      timeFormatted\n    }\n  }];\n}\n\n// Case 3: create_task intent\nif (tasks.length === 0) {\n  tasks = [{ title: fallbackTitle, notes: '' }];\n}\n\nreturn tasks.map(t => ({\n  json: {\n    action: 'create_task',\n    chatId,\n    taskTitle: t.title.trim(),\n    notes: t.notes || 'Added via Telegram To-Do Bot',\n    timeFormatted\n  }\n}));"
+      },
+      "id": "parse-ai-intent",
+      "name": "Parse AI Intent & Tasks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1180,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "create_task",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "list_tasks",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "help",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        }
+      },
+      "id": "switch-ai-action",
+      "name": "Route AI Action Switch",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1400,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "task",
+        "operation": "create",
+        "task": "@default",
+        "title": "={{ $json.taskTitle }}",
+        "additionalFields": {
+          "notes": "={{ $json.notes || 'Added via Telegram To-Do Bot' }}"
+        }
+      },
+      "id": "google-tasks-create",
+      "name": "Google Tasks: Add Task",
+      "type": "n8n-nodes-base.googleTasks",
+      "typeVersion": 1,
+      "position": [
+        1640,
+        60
+      ],
+      "credentials": {
+        "googleTasksOAuth2Api": {
+          "id": "C96BOhqabKCejx0f",
+          "name": "Google Tasks account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// =========================================================================\n// 🎨 FORMAT CREATED TASK CARD (iPhone Layout with Action Buttons)\n// =========================================================================\nconst items = $input.all();\nconst routeMeta = $('Route & Parse Event').first().json;\nconst chatId = routeMeta.chatId;\nconst timeFormatted = routeMeta.timeFormatted;\n\nreturn items.map(item => {\n  const created = item.json;\n  const title = created.title || 'Untitled Task';\n  const taskId = created.id || '';\n\n  let msg = `📌 <b>Task Added to Google Tasks</b>\\n`;\n  msg += `━━━━━━━━━━\\n`;\n  msg += `📝 <b>${title}</b>\\n`;\n  msg += `⏰ <i>Today • ${timeFormatted} (Berlin)</i>`;\n\n  return {\n    json: {\n      chatId,\n      taskId,\n      title,\n      messageText: msg\n    }\n  };\n});"
+      },
+      "id": "format-created-card",
+      "name": "Format Created Task Card",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1860,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.messageText }}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "✅ Mark Done",
+                    "additionalFields": {
+                      "callback_data": "={{ 'done:' + $json.taskId }}"
+                    }
+                  },
+                  {
+                    "text": "🗑️ Delete",
+                    "additionalFields": {
+                      "callback_data": "={{ 'del:' + $json.taskId }}"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "📋 View All Tasks",
+                    "additionalFields": {
+                      "callback_data": "list"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "telegram-send-created",
+      "name": "Telegram: Send Created Task",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2080,
+        60
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "1YPB2RqCCOaGdDCL",
+          "name": "Daily To Do App Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "callback",
+        "operation": "answerQuery",
+        "queryId": "={{ $json.callbackId }}",
+        "additionalFields": {
+          "text": "✅ Task marked as completed! 🎉"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "id": "telegram-ack-done",
+      "name": "Answer Callback: Done",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        920,
+        360
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "1YPB2RqCCOaGdDCL",
+          "name": "Daily To Do App Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "task",
+        "operation": "update",
+        "task": "@default",
+        "taskId": "={{ $('Route & Parse Event').first().json.taskId }}",
+        "updateFields": {
+          "status": "completed"
+        }
+      },
+      "id": "google-tasks-mark-done",
+      "name": "Google Tasks: Mark Done",
+      "type": "n8n-nodes-base.googleTasks",
+      "typeVersion": 1,
+      "position": [
+        1180,
+        360
+      ],
+      "credentials": {
+        "googleTasksOAuth2Api": {
+          "id": "C96BOhqabKCejx0f",
+          "name": "Google Tasks account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// =========================================================================\n// ✏️ ASSEMBLE IN-PLACE MESSAGE UPDATE (Marked Done)\n// =========================================================================\nconst routeMeta = $('Route & Parse Event').first().json;\nconst chatId = routeMeta.chatId;\nconst messageId = routeMeta.messageId;\nconst originalText = routeMeta.originalText || '';\n\nconst lines = originalText.split('\\n').filter(l => l.trim().length > 0 && !l.includes('Tap below') && !l.includes('━'));\nconst taskTitleLine = lines.find(l => l.includes('📝') || l.match(/^[0-9]️⃣/)) || lines[0] || 'Task';\nconst cleanTaskTitle = taskTitleLine.replace(/^[0-9]️⃣\\s*/, '').replace(/^📝\\s*/, '').replace(/<[^>]+>/g, '').trim();\n\nlet updatedText = `✅ <b>Task Completed!</b>\\n`;\nupdatedText += `━━━━━━━━━━\\n`;\nupdatedText += `<s>${cleanTaskTitle}</s>\\n`;\nupdatedText += `🎉 <i>Checked off in Google Tasks</i>`;\n\nreturn [{\n  json: {\n    chatId,\n    messageId,\n    updatedText\n  }\n}];"
+      },
+      "id": "format-done-update",
+      "name": "Format Done Update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "editMessageText",
+        "chatId": "={{ $json.chatId }}",
+        "messageId": "={{ $json.messageId }}",
+        "text": "={{ $json.updatedText }}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "📋 View All Tasks",
+                    "additionalFields": {
+                      "callback_data": "list"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "telegram-edit-done",
+      "name": "Telegram: Edit Done Message",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1700,
+        360
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "1YPB2RqCCOaGdDCL",
+          "name": "Daily To Do App Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "callback",
+        "operation": "answerQuery",
+        "queryId": "={{ $json.callbackId }}",
+        "additionalFields": {
+          "text": "🗑️ Task cancelled and deleted."
+        }
+      },
+      "onError": "continueRegularOutput",
+      "id": "telegram-ack-del",
+      "name": "Answer Callback: Delete",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        920,
+        520
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "1YPB2RqCCOaGdDCL",
+          "name": "Daily To Do App Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "task",
+        "operation": "delete",
+        "task": "@default",
+        "taskId": "={{ $('Route & Parse Event').first().json.taskId }}"
+      },
+      "id": "google-tasks-delete",
+      "name": "Google Tasks: Delete Task",
+      "type": "n8n-nodes-base.googleTasks",
+      "typeVersion": 1,
+      "position": [
+        1180,
+        520
+      ],
+      "credentials": {
+        "googleTasksOAuth2Api": {
+          "id": "C96BOhqabKCejx0f",
+          "name": "Google Tasks account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// =========================================================================\n// 🗑️ ASSEMBLE IN-PLACE MESSAGE UPDATE (Deleted Task)\n// =========================================================================\nconst routeMeta = $('Route & Parse Event').first().json;\nconst chatId = routeMeta.chatId;\nconst messageId = routeMeta.messageId;\nconst originalText = routeMeta.originalText || '';\n\nconst lines = originalText.split('\\n').filter(l => l.trim().length > 0 && !l.includes('Tap below') && !l.includes('━'));\nconst taskTitleLine = lines.find(l => l.includes('📝') || l.match(/^[0-9]️⃣/)) || lines[0] || 'Task';\nconst cleanTaskTitle = taskTitleLine.replace(/^[0-9]️⃣\\s*/, '').replace(/^📝\\s*/, '').replace(/<[^>]+>/g, '').trim();\n\nlet updatedText = `🗑️ <b>Task Deleted</b>\\n`;\nupdatedText += `━━━━━━━━━━\\n`;\nupdatedText += `<s>${cleanTaskTitle}</s>\\n`;\nupdatedText += `👋 <i>Removed from Google Tasks</i>`;\n\nreturn [{\n  json: {\n    chatId,\n    messageId,\n    updatedText\n  }\n}];"
+      },
+      "id": "format-deleted-update",
+      "name": "Format Deleted Update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "editMessageText",
+        "chatId": "={{ $json.chatId }}",
+        "messageId": "={{ $json.messageId }}",
+        "text": "={{ $json.updatedText }}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "📋 View All Tasks",
+                    "additionalFields": {
+                      "callback_data": "list"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "telegram-edit-deleted",
+      "name": "Telegram: Edit Deleted Message",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1700,
+        520
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "1YPB2RqCCOaGdDCL",
+          "name": "Daily To Do App Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "task",
+        "operation": "getAll",
+        "task": "@default",
+        "returnAll": true,
+        "additionalFields": {
+          "showCompleted": false,
+          "showHidden": false
+        }
+      },
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "id": "google-tasks-get-all",
+      "name": "Google Tasks: Get Active Tasks",
+      "type": "n8n-nodes-base.googleTasks",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        780
+      ],
+      "credentials": {
+        "googleTasksOAuth2Api": {
+          "id": "C96BOhqabKCejx0f",
+          "name": "Google Tasks account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// =========================================================================\n// 📱 FORMAT IPHONE TO-DO BRIEFING & TASK CARDS\n// =========================================================================\nconst items = $input.all().map(item => item.json);\nconst routeMeta = $('Route & Parse Event').first().json;\nconst chatId = routeMeta.chatId || '1519369571';\nconst todayFormatted = routeMeta.todayFormatted || $now.setZone('Europe/Berlin').toFormat('EEEE, dd MMMM yyyy');\nconst timeFormatted = routeMeta.timeFormatted || $now.setZone('Europe/Berlin').toFormat('HH:mm');\n\n// Filter valid active tasks (must have non-empty id and title)\nconst activeTasks = items.filter(t => t && t.id && t.status !== 'completed' && t.title && t.title.trim().length > 0);\n\nif (activeTasks.length === 0) {\n  let emptyMsg = `🎉 <b>All Clear! No Tasks To Do</b>\\n`;\n  emptyMsg += `━━━━━━━━━━\\n\\n`;\n  emptyMsg += `You have no tasks to do right now! Enjoy your day. ✨\\n\\n`;\n  emptyMsg += `💡 <i>To add a task, send text or voice:</i>\\n`;\n  emptyMsg += `<code>/add Prepare pitch deck</code>`;\n\n  return [{\n    json: {\n      chatId,\n      messageText: emptyMsg,\n      taskId: '',\n      isEmpty: true\n    }\n  }];\n}\n\nconst numEmojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];\n\nreturn activeTasks.map((task, index) => {\n  const emoji = numEmojis[index] || `[${index + 1}]`;\n  const cleanTitle = task.title.trim();\n  let text = `${emoji} <b>${cleanTitle}</b>\\n`;\n  text += `⏰ <i>Google Tasks • Active</i>`;\n\n  return {\n    json: {\n      chatId,\n      messageText: text,\n      taskId: task.id,\n      taskTitle: cleanTitle,\n      index: index + 1,\n      isEmpty: false\n    }\n  };\n});"
+      },
+      "id": "format-todo-list-card",
+      "name": "Format To-Do List Card",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        780
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.isEmpty }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-empty-list",
+      "name": "Check If Empty List?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1520,
+        780
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.messageText }}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "🔄 Refresh List",
+                    "additionalFields": {
+                      "callback_data": "list"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "telegram-send-empty-list",
+      "name": "Telegram: Send Empty List",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1780,
+        720
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "1YPB2RqCCOaGdDCL",
+          "name": "Daily To Do App Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.messageText }}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "✅ Mark Done",
+                    "additionalFields": {
+                      "callback_data": "={{ 'done:' + $json.taskId }}"
+                    }
+                  },
+                  {
+                    "text": "🗑️ Delete",
+                    "additionalFields": {
+                      "callback_data": "={{ 'del:' + $json.taskId }}"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "🔄 Refresh List",
+                    "additionalFields": {
+                      "callback_data": "list"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "telegram-send-todo-card",
+      "name": "Telegram: Send Task Card",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1780,
+        860
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "1YPB2RqCCOaGdDCL",
+          "name": "Daily To Do App Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ `📋 <b>Interactive Google Tasks Bot</b>\\n` +\n`━━━━━━━━━━\\n\\n` +\n`<b>Ways to use this bot:</b>\\n` +\n`• 🎙️ <b>Voice Message:</b> Just tap the mic and speak naturally!\\n` +\n`  <i>\"Show my to do list\"</i>\\n` +\n`  <i>\"Add meeting tomorrow at 3pm and buy groceries\"</i>\\n\\n` +\n`• 💬 <b>Natural Text:</b> Type anything in plain English or Turkish\\n` +\n`  <i>\"What do I have to do today?\"</i>\\n` +\n`  <i>\"Train to Passau at 4.24, call investor\"</i>\\n\\n` +\n`• ⚡ <b>Quick Commands:</b>\\n` +\n`  <code>/tasks</code> — View active tasks\\n` +\n`  <code>/add &lt;task&gt;</code> — Add task(s)\\n` +\n`  <code>/help</code> — Show this guide\\n\\n` +\n`⏰ <b>Automated Daily Morning Checklist:</b>\\n` +\n`Every morning at <b>08:00 AM Berlin time</b>, your pending tasks will automatically be delivered here with interactive action buttons.\\n\\n` +\n`⚡ <i>Synced in real time with Google Tasks.</i>` }}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "📋 View All Tasks",
+                    "additionalFields": {
+                      "callback_data": "list"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "telegram-send-help",
+      "name": "Telegram: Send Help Guide",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        920,
+        960
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "1YPB2RqCCOaGdDCL",
+          "name": "Daily To Do App Bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Daily Morning Trigger (08:00 AM Berlin)": {
+      "main": [
+        [
+          {
+            "node": "Route & Parse Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Bot Trigger": {
+      "main": [
+        [
+          {
+            "node": "Route & Parse Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route & Parse Event": {
+      "main": [
+        [
+          {
+            "node": "Action Router Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Action Router Switch": {
+      "main": [
+        [
+          {
+            "node": "AI Task & Intent Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Answer Callback: Done",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Answer Callback: Delete",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Google Tasks: Get Active Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram: Send Help Guide",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram: Download Voice File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram: Download Voice File": {
+      "main": [
+        [
+          {
+            "node": "Prepare Voice Audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini: Transcribe Voice Note": {
+      "main": [
+        [
+          {
+            "node": "Extract Voice Transcription",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait 30s Before Voice Retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Voice Transcription": {
+      "main": [
+        [
+          {
+            "node": "AI Task & Intent Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Task & Intent Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Task & Intent Agent": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Intent & Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Intent & Tasks": {
+      "main": [
+        [
+          {
+            "node": "Route AI Action Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route AI Action Switch": {
+      "main": [
+        [
+          {
+            "node": "Google Tasks: Add Task",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Google Tasks: Get Active Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram: Send Help Guide",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Tasks: Add Task": {
+      "main": [
+        [
+          {
+            "node": "Format Created Task Card",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Created Task Card": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Send Created Task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Answer Callback: Done": {
+      "main": [
+        [
+          {
+            "node": "Google Tasks: Mark Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Tasks: Mark Done": {
+      "main": [
+        [
+          {
+            "node": "Format Done Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Done Update": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Edit Done Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Answer Callback: Delete": {
+      "main": [
+        [
+          {
+            "node": "Google Tasks: Delete Task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Tasks: Delete Task": {
+      "main": [
+        [
+          {
+            "node": "Format Deleted Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Deleted Update": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Edit Deleted Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Tasks: Get Active Tasks": {
+      "main": [
+        [
+          {
+            "node": "Format To-Do List Card",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format To-Do List Card": {
+      "main": [
+        [
+          {
+            "node": "Check If Empty List?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check If Empty List?": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Send Empty List",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram: Send Task Card",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Voice Audio": {
+      "main": [
+        [
+          {
+            "node": "Gemini: Transcribe Voice Note",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini: Transcribe Voice Note (Attempt 2)": {
+      "main": [
+        [
+          {
+            "node": "Extract Voice Transcription",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait 60s Before Voice Retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini: Transcribe Voice Note (Attempt 3)": {
+      "main": [
+        [
+          {
+            "node": "Extract Voice Transcription",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram: Voice Transcription Unavailable",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 30s Before Voice Retry": {
+      "main": [
+        [
+          {
+            "node": "Gemini: Transcribe Voice Note (Attempt 2)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 60s Before Voice Retry": {
+      "main": [
+        [
+          {
+            "node": "Gemini: Transcribe Voice Note (Attempt 3)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

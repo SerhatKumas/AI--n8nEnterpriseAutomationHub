@@ -1,0 +1,23 @@
+{
+  "update_id": 100002,
+  "message": {
+    "message_id": 85,
+    "from": {
+      "id": 123456789,
+      "is_bot": false,
+      "first_name": "Serhat",
+      "last_name": "Kumas",
+      "username": "serhatkumas",
+      "language_code": "en"
+    },
+    "chat": {
+      "id": 123456789,
+      "first_name": "Serhat",
+      "last_name": "Kumas",
+      "username": "serhatkumas",
+      "type": "private"
+    },
+    "date": 1729636800,
+    "text": "Acme Corp için 1500 EUR Web Development and AI Integration faturası kesebilir misin bugünün tarihiyle?"
+  }
+}

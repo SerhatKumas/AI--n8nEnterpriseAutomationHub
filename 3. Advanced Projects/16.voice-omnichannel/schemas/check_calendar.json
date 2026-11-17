@@ -1,0 +1,25 @@
+{
+  "type": "function",
+  "function": {
+    "name": "check_calendar_availability",
+    "description": "Checks Google Calendar for open slots for a specific date.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "date": {
+          "type": "string",
+          "description": "Date in YYYY-MM-DD format (e.g., 2026-11-18)."
+        },
+        "preferred_time_of_day": {
+          "type": "string",
+          "enum": ["morning", "afternoon", "evening", "any"],
+          "description": "Preferred window of the day."
+        }
+      },
+      "required": ["date"]
+    }
+  },
+  "server": {
+    "url": "https://n8n.codewaft.com/webhook/vapi-tools"
+  }
+}

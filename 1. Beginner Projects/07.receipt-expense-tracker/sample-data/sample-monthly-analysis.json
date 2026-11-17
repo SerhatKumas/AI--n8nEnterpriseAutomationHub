@@ -1,0 +1,80 @@
+{
+  "targetPeriod": "2026-03",
+  "targetMonthName": "March 2026",
+  "currency": "EUR",
+  "currencySymbol": "€",
+  "totalSpend": 412.09,
+  "transactionCount": 10,
+  "dailyAverage": 13.29,
+  "categoryBreakdown": [
+    {
+      "category": "Electronics & Tech",
+      "icon": "💻",
+      "totalAmount": 238.99,
+      "percentage": 58.0,
+      "count": 2,
+      "avgPerTransaction": 119.50
+    },
+    {
+      "category": "Groceries & Supermarket",
+      "icon": "🛒",
+      "totalAmount": 77.70,
+      "percentage": 18.9,
+      "count": 2,
+      "avgPerTransaction": 38.85
+    },
+    {
+      "category": "Dining Out & Restaurants",
+      "icon": "🍽️",
+      "totalAmount": 45.30,
+      "percentage": 11.0,
+      "count": 2,
+      "avgPerTransaction": 22.65
+    },
+    {
+      "category": "Health & Pharmacy",
+      "icon": "💊",
+      "totalAmount": 22.30,
+      "percentage": 5.4,
+      "count": 1,
+      "avgPerTransaction": 22.30
+    },
+    {
+      "category": "Transportation & Travel",
+      "icon": "🚗",
+      "totalAmount": 18.40,
+      "percentage": 4.5,
+      "count": 1,
+      "avgPerTransaction": 18.40
+    },
+    {
+      "category": "Coffee & Snacks",
+      "icon": "☕",
+      "totalAmount": 12.30,
+      "percentage": 3.0,
+      "count": 2,
+      "avgPerTransaction": 6.15
+    }
+  ],
+  "topPurchases": [
+    {
+      "merchant": "Apple Store Kurfuerstendamm",
+      "amount": 149.00,
+      "category": "Electronics & Tech",
+      "date": "2026-03-25"
+    },
+    {
+      "merchant": "MediaMarkt",
+      "amount": 89.99,
+      "category": "Electronics & Tech",
+      "date": "2026-03-12"
+    },
+    {
+      "merchant": "Rewe Supermarket",
+      "amount": 42.50,
+      "category": "Groceries & Supermarket",
+      "date": "2026-03-04"
+    }
+  ]
+}
+

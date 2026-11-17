@@ -1,0 +1,23 @@
+{
+  "update_id": 987654321,
+  "message": {
+    "message_id": 1042,
+    "from": {
+      "id": 123456789,
+      "is_bot": false,
+      "first_name": "Serhat",
+      "last_name": "Kumas",
+      "username": "serhatkumas",
+      "language_code": "en"
+    },
+    "chat": {
+      "id": 123456789,
+      "first_name": "Serhat",
+      "last_name": "Kumas",
+      "username": "serhatkumas",
+      "type": "private"
+    },
+    "date": 1792681200,
+    "text": "Hey, can you schedule a meeting with client regarding the website redesign tomorrow at 3 PM for 45 minutes on Google Meet?"
+  }
+}

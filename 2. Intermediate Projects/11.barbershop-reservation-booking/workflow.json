@@ -1,0 +1,620 @@
+{
+  "name": "Project 11 - Barbershop Reservation Booking Agent (Supabase)",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message",
+          "callback_query"
+        ],
+        "additionalFields": {}
+      },
+      "id": "telegram-trigger",
+      "name": "Telegram Trigger (Customer & Owner)",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        100,
+        400
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "RpIeLATSMTsU1ciP",
+          "name": "Reservation Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\n\n// Central Barbershop & Owner Credentials\nconst OWNER_USER_ID = \"1519369571\"; // Serhat Kumas Telegram User ID (Admin/Owner)\nconst SHOP_NAME = \"Crown & Blade Gentlemen's Barbershop\";\nconst SHOP_LOCATION = \"Maximilianstraße 34, 80539 Munich\";\nconst BOT_TOKEN = \"YOUR_TELEGRAM_BOT_TOKEN\"; // Reservation Bot (@Reservation_sk_bot)\n\n// Supabase PostgreSQL Configuration\n// Replace with your project URL and service_role or anon key from Supabase Settings -> API\nconst SUPABASE_URL = \"https://ngpujpgcwcxvrqoemcio.supabase.co\";\nconst SUPABASE_KEY = \"YOUR_SUPABASE_SERVICE_ROLE_KEY\";\n\n// Operating Parameters (Monday - Saturday 09:00 - 19:00, 1-hour slots)\nconst WORKING_HOURS = {\n  startHour: 9,\n  endHour: 19,\n  workingDays: [1, 2, 3, 4, 5, 6], // Mon-Sat (0=Sun)\n  slotDurationMinutes: 60,\n  allSlots: [\"09:00\", \"10:00\", \"11:00\", \"12:00\", \"13:00\", \"14:00\", \"15:00\", \"16:00\", \"17:00\", \"18:00\"]\n};\n\n// Services Menu\nconst SERVICES = [\n  { id: \"haircut\", name: \"Classic Haircut & Styling\", price: \"€35\", duration: \"45 min\" },\n  { id: \"beard\", name: \"Beard Sculpting & Hot Towel\", price: \"€25\", duration: \"30 min\" },\n  { id: \"royal\", name: \"The Royal Treatment (Haircut + Beard + Facial)\", price: \"€55\", duration: \"60 min\" },\n  { id: \"buzz\", name: \"Buzz Cut & Refreshing Wash\", price: \"€25\", duration: \"30 min\" }\n];\n\n// Extract Sender Information\nconst callbackQuery = item.callback_query;\nconst message = item.message;\n\nlet userId = \"\";\nlet chatId = \"\";\nlet firstName = \"Guest\";\nlet username = \"\";\nlet text = \"\";\nlet callbackData = \"\";\nlet callbackQueryId = \"\";\nlet isCallback = false;\nlet messageId = null;\n\nif (callbackQuery) {\n  isCallback = true;\n  userId = String(callbackQuery.from?.id || \"\");\n  chatId = String(callbackQuery.message?.chat?.id || userId);\n  firstName = callbackQuery.from?.first_name || \"Guest\";\n  username = callbackQuery.from?.username ? `@${callbackQuery.from.username}` : \"\";\n  callbackData = String(callbackQuery.data || \"\").trim();\n  callbackQueryId = callbackQuery.id;\n  messageId = callbackQuery.message?.message_id;\n  text = callbackData;\n} else if (message) {\n  userId = String(message.from?.id || \"\");\n  chatId = String(message.chat?.id || userId);\n  firstName = message.from?.first_name || \"Guest\";\n  username = message.from?.username ? `@${message.from.username}` : \"\";\n  text = String(message.text || \"\").trim();\n  messageId = message.message_id;\n}\n\nconst isOwner = (String(userId) === String(OWNER_USER_ID));\n\nreturn [{\n  json: {\n    ownerUserId: OWNER_USER_ID,\n    shopName: SHOP_NAME,\n    shopLocation: SHOP_LOCATION,\n    supabaseUrl: SUPABASE_URL,\n    supabaseKey: SUPABASE_KEY,\n    botToken: BOT_TOKEN,\n    workingHours: WORKING_HOURS,\n    services: SERVICES,\n    userId: userId,\n    chatId: chatId,\n    firstName: firstName,\n    username: username,\n    userText: text,\n    isCallback: isCallback,\n    callbackData: callbackData,\n    callbackQueryId: callbackQueryId,\n    messageId: messageId,\n    isOwner: isOwner,\n    currentDateIso: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "central-security-guard",
+      "name": "Central Brand & Security Guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        340,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-callback-query",
+              "leftValue": "={{ $json.isCallback }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-is-button-callback",
+      "name": "Is Button Callback?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        580,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $json.botToken }}/answerCallbackQuery?callback_query_id={{ $json.callbackQueryId }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "ack-callback-query",
+      "name": "Acknowledge Button Click",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        800,
+        260
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "let guardItem = {};\ntry {\n  guardItem = $('Central Brand & Security Guard').first().json;\n} catch (e) {\n  guardItem = $input.first().json;\n}\nconst data = guardItem.callbackData || \"\";\n\nlet intent = \"UNKNOWN\";\nlet bookingId = \"\";\nlet targetDate = \"\";\nlet targetTime = \"\";\n\n// Smart default date (forward past 18:00 or Sunday to next business day)\nconst now = new Date();\nlet defaultDate = now.toISOString().split(\"T\")[0];\nif (now.getHours() >= 18) {\n  defaultDate = new Date(now.getTime() + 24 * 3600 * 1000).toISOString().split(\"T\")[0];\n}\nif (new Date(defaultDate + \"T12:00:00Z\").getUTCDay() === 0) {\n  defaultDate = new Date(new Date(defaultDate + \"T12:00:00Z\").getTime() + 24 * 3600 * 1000).toISOString().split(\"T\")[0];\n}\n\nif (data.startsWith(\"cancel_bkg:\")) {\n  intent = guardItem.isOwner ? \"ADMIN_CANCEL\" : \"CANCEL\";\n  bookingId = data.replace(\"cancel_bkg:\", \"\").trim();\n} else if (data.startsWith(\"view_slots:\")) {\n  intent = \"CHECK_SLOTS\";\n  targetDate = data.replace(\"view_slots:\", \"\").trim() || defaultDate;\n} else if (data.startsWith(\"book_slot:\")) {\n  // format book_slot:YYYY-MM-DD_HH:MM\n  intent = \"BOOK\";\n  const parts = data.replace(\"book_slot:\", \"\").trim().split(\"_\");\n  targetDate = parts[0] || defaultDate;\n  targetTime = parts[1] || \"\";\n} else if (data === \"my_bookings\") {\n  intent = \"MY_BOOKINGS\";\n} else if (data === \"admin_today\") {\n  intent = \"ADMIN_LIST_ALL\";\n  targetDate = defaultDate;\n}\n\nreturn [{\n  json: {\n    ...guardItem,\n    parsedIntent: intent,\n    targetDate: targetDate,\n    targetTime: targetTime,\n    bookingId: bookingId,\n    service: \"Classic Haircut & Styling\",\n    cancellationReason: guardItem.isOwner ? \"Cancelled by Barbershop Owner\" : \"Customer cancelled\",\n    detectedLanguage: \"tr\"\n  }\n}];"
+      },
+      "id": "parse-button-action",
+      "name": "Parse Button Action",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1020,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "let item = {};\ntry {\n  item = $('Central Brand & Security Guard').first().json;\n} catch (e) {\n  item = $input.first().json;\n}\n\n// Reference timestamps for relative date conversion\nconst now = new Date();\nconst nowIso = now.toISOString();\nconst currentDate = nowIso.split(\"T\")[0]; // YYYY-MM-DD\nconst dayOfWeekName = [\"Sunday\", \"Monday\", \"Tuesday\", \"Wednesday\", \"Thursday\", \"Friday\", \"Saturday\"][now.getDay()];\n\nconst prompt = `You are the elite AI reservation and customer intake concierge for \"${item.shopName}\".\nLocation: ${item.shopLocation}.\nOperating Hours: Monday to Saturday 09:00 - 19:00 (1-hour slots: 09:00, 10:00, 11:00, 12:00, 13:00, 14:00, 15:00, 16:00, 17:00, 18:00). Closed on Sundays.\nAvailable Services:\n- Classic Haircut & Styling (€35, 45 min)\n- Beard Sculpting & Hot Towel (€25, 30 min)\n- The Royal Treatment (Haircut + Beard + Facial, €55, 60 min)\n- Buzz Cut & Wash (€25, 30 min)\n\nReference Current Timestamp:\n- Today's Date: ${currentDate} (${dayOfWeekName})\n- Current Time: ${now.toTimeString().split(\" \")[0]}\n\nUser Information:\n- Telegram Name: ${item.firstName}\n- Telegram User ID: ${item.userId}\n- Sender Role: ${item.isOwner ? \"SHOP_OWNER / ADMIN\" : \"CUSTOMER\"}\n\nUser's Incoming Message:\n\"${item.userText}\"\n\nYOUR GOAL:\nClassify user intent, extract all scheduling parameters, and extract any customer contact details (Full Name, Phone Number).\nSupport Turkish, English, and German natively based on the user's message language.\n\nINTENT TYPES:\n1. \"BOOK\": User wants to make an appointment or specifies date/time (e.g. \"Yarın saat 12.00 için randevu almak istiyorum\", \"I want a haircut tomorrow at 3pm\", \"Book Friday 14:00\").\n2. \"PROVIDE_CONTACT\": User is providing their name and/or phone number to finalize a booking (e.g. \"Ahmet Yılmaz 0532 123 4567\", \"Telefonum 05551234567, adım Mehmet\", \"+905321234567\", \"0532 123 45 67\").\n3. \"CANCEL\": Customer wants to cancel their appointment (e.g. \"Randevumu iptal etmek istiyorum\", \"Cancel my booking\", \"I can't make it tomorrow\").\n4. \"MY_BOOKINGS\": Customer asks about their appointments (e.g. \"Randevum ne zaman?\", \"Show my bookings\", \"Aktif randevum var mı?\").\n5. \"CHECK_SLOTS\": User asks which hours are free (e.g. \"Yarın hangi saatler boş?\", \"Available times on Saturday?\").\n6. \"ADMIN_LIST_ALL\": ONLY AVAILABLE TO OWNER (userId: ${item.ownerUserId}). Owner wants to see all bookings (e.g. \"Yarınki randevuları listele\", \"Show all bookings for today\").\n7. \"ADMIN_CANCEL\": ONLY AVAILABLE TO OWNER (userId: ${item.ownerUserId}). Owner cancels any booking (e.g. \"Ali'nin 14:00 randevusunu iptal et\", \"Cancel booking BKG-102\").\n8. \"HELP_GREETING\": Greetings, service prices, working hours (/start, \"Merhaba\", \"Hello\", \"Fiyatlar nedir?\").\n\nCRITICAL EXTRACTION RULES:\n- Date resolution:\n  - \"bugün\" / \"today\" -> \"${currentDate}\"\n  - \"yarın\" / \"tomorrow\" -> calculate exactly 1 day after ${currentDate}\n  - Named weekdays (\"Cuma\", \"Friday\", \"Pazartesi\") -> calculate exact YYYY-MM-DD.\n- Time normalization:\n  - \"12.00\", \"12:00\", \"öğlen 12\" -> \"12:00\"\n  - \"15:00\", \"3pm\", \"öğleden sonra 3\" -> \"15:00\"\n  - Standardize to 24-hour \"HH:00\" format matching slots: 09:00, 10:00, 11:00, 12:00, 13:00, 14:00, 15:00, 16:00, 17:00, 18:00.\n- Customer Contact Details:\n  - \"customerName\": Extract the user's full name if provided in the text (e.g. \"Ahmet Yılmaz\", \"Serhat Kumaş\", \"John Miller\"). If user only gives a first name, extract that. If not provided, null.\n  - \"customerPhone\": Extract the phone number if present in ANY format (e.g. \"0532 123 45 67\", \"+90 555 123 4567\", \"05551234567\", \"+49 170 1234567\"). Normalize into clean format or null if not mentioned.\n- Language Detection:\n  - \"language\": \"tr\" if Turkish, \"en\" if English, \"de\" if German.\n\nOUTPUT FORMAT:\nReturn STRICT JSON ONLY (no markdown fences, no conversational text outside JSON):\n{\n  \"intent\": \"BOOK\" | \"PROVIDE_CONTACT\" | \"CANCEL\" | \"MY_BOOKINGS\" | \"CHECK_SLOTS\" | \"ADMIN_LIST_ALL\" | \"ADMIN_CANCEL\" | \"HELP_GREETING\",\n  \"language\": \"tr\" | \"en\" | \"de\",\n  \"targetDate\": \"YYYY-MM-DD\" or null,\n  \"targetTime\": \"HH:00\" or null,\n  \"service\": \"Classic Haircut & Styling\" | \"Beard Sculpting & Hot Towel\" | \"The Royal Treatment\" | \"Buzz Cut & Wash\",\n  \"customerName\": \"Extracted name or null\",\n  \"customerPhone\": \"Extracted phone or null\",\n  \"bookingId\": \"BKG-XXXX or null\",\n  \"cancellationReason\": \"Reason if mentioned or null\",\n  \"friendlyNote\": \"Polite 1-sentence note in user language\"\n}`;\n\nreturn [{\n  json: {\n    ...item,\n    geminiPrompt: prompt\n  }\n}];"
+      },
+      "id": "prepare-gemini-prompt",
+      "name": "Prepare Gemini NLP Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        540
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ contents: [{ parts: [{ text: $json.geminiPrompt }] }], generationConfig: { temperature: 0.2, responseMimeType: 'application/json' } }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "gemini-intent-extractor",
+      "name": "Gemini: Extract Intent & Entities",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1020,
+        540
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "zvLpU1ScjMCeOYQq",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst rawText = item.candidates?.[0]?.content?.parts?.[0]?.text || \"{}\";\n\nlet parsed = {};\ntry {\n  const cleaned = rawText.replace(/```json/gi, \"\").replace(/```/g, \"\").trim();\n  parsed = JSON.parse(cleaned);\n} catch (e) {\n  parsed = {\n    intent: \"HELP_GREETING\",\n    language: \"tr\",\n    friendlyNote: \"Crown & Blade Barbershop'a hoş geldiniz! Size randevu konusunda nasıl yardımcı olabilirim?\"\n  };\n}\n\nconst cfg = $('Central Brand & Security Guard').first().json;\n\n// Enforce role-based intent protection\nlet safeIntent = parsed.intent || \"HELP_GREETING\";\nif ((safeIntent === \"ADMIN_LIST_ALL\" || safeIntent === \"ADMIN_CANCEL\") && !cfg.isOwner) {\n  safeIntent = \"UNAUTHORIZED_ADMIN_ATTEMPT\";\n}\n\nreturn [{\n  json: {\n    ...cfg,\n    parsedIntent: safeIntent,\n    detectedLanguage: parsed.language || \"tr\",\n    targetDate: parsed.targetDate || \"\",\n    targetTime: parsed.targetTime || \"\",\n    service: parsed.service || \"Classic Haircut & Styling\",\n    extractedCustomerName: parsed.customerName || null,\n    extractedCustomerPhone: parsed.customerPhone || null,\n    bookingId: parsed.bookingId || null,\n    cancellationReason: parsed.cancellationReason || \"No reason specified\",\n    aiReply: parsed.friendlyNote || \"\"\n  }\n}];"
+      },
+      "id": "parse-gemini-response",
+      "name": "Parse AI Intent & Normalizer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1240,
+        540
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.supabaseUrl }}/rest/v1/bookings?select=*&order=booking_date.asc,time_slot.asc",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $json.supabaseKey }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.supabaseKey }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "supabase-read-bookings",
+      "name": "Supabase: Read All Bookings",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1480,
+        400
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const cfg = $('Central Brand & Security Guard').first().json;\n\n// Extract intent data directly from either Button action or AI NLP parser\nlet intentData = {};\nif (cfg.isCallback) {\n  try { intentData = $('Parse Button Action').first().json; } catch(e) {}\n} else {\n  try { intentData = $('Parse AI Intent & Normalizer').first().json; } catch(e) {}\n}\n\nconst targetIntent = intentData.parsedIntent || \"HELP_GREETING\";\nconst targetDateInput = intentData.targetDate || \"\";\nconst targetTimeInput = intentData.targetTime || \"\";\nconst serviceInput = intentData.service || \"Classic Haircut & Styling\";\nconst bookingIdInput = intentData.bookingId || null;\nconst cancellationReasonInput = intentData.cancellationReason || \"No reason specified\";\nconst lang = intentData.detectedLanguage || \"tr\";\nconst extractedCustomerName = intentData.extractedCustomerName || null;\nconst extractedCustomerPhone = intentData.extractedCustomerPhone || null;\n\n// Extract Supabase PostgreSQL rows safely\nlet allDbRows = [];\ntry {\n  const rawDb = $('Supabase: Read All Bookings').all();\n  allDbRows = rawDb.map(i => i.json || {}).filter(r => r.booking_id || r[\"Booking ID\"]);\n} catch(e) {\n  allDbRows = [];\n}\n\n// Normalize DB row fields for both snake_case and Title Case\nconst normalizedRows = allDbRows.map(r => ({\n  booking_id: r.booking_id || r[\"Booking ID\"] || \"\",\n  booking_date: r.booking_date || r[\"Date\"] || \"\",\n  time_slot: r.time_slot || r[\"Time Slot\"] || \"\",\n  customer_name: r.customer_name || r[\"Customer Name\"] || \"Guest\",\n  customer_phone: r.customer_phone || r[\"Customer Phone\"] || null,\n  telegram_user_id: String(r.telegram_user_id || r[\"Telegram User ID\"] || \"\"),\n  telegram_username: r.telegram_username || r[\"Telegram Username\"] || \"\",\n  service: r.service || r[\"Service\"] || \"Classic Haircut & Styling\",\n  price: r.price || r[\"Price\"] || \"€35\",\n  status: r.status || r[\"Status\"] || \"Confirmed\",\n  notes: r.notes || r[\"Notes\"] || \"\"\n}));\n\n// Find existing customer info if they previously booked\nconst pastCustomer = normalizedRows.find(r => r.telegram_user_id === String(cfg.userId) && r.customer_phone);\nconst existingPhone = pastCustomer ? pastCustomer.customer_phone : null;\nconst existingName = pastCustomer ? pastCustomer.customer_name : null;\n\n// Find any active pending Draft booking for this user\nconst activeDraft = normalizedRows.find(r => r.telegram_user_id === String(cfg.userId) && r.status === \"Draft\");\n\nconst allSlots = cfg.workingHours.allSlots;\nconst now = new Date();\nconst nowIso = now.toISOString();\n\n// Smart default date for buttons (forward to tomorrow if past 18:00 or if Sunday)\nlet defaultDate = nowIso.split(\"T\")[0];\nif (now.getHours() >= 18) {\n  defaultDate = new Date(now.getTime() + 24 * 3600 * 1000).toISOString().split(\"T\")[0];\n}\nif (new Date(defaultDate + \"T12:00:00Z\").getUTCDay() === 0) {\n  defaultDate = new Date(new Date(defaultDate + \"T12:00:00Z\").getTime() + 24 * 3600 * 1000).toISOString().split(\"T\")[0];\n}\nconst todayDateStr = defaultDate;\n\nlet dbAction = \"NONE\"; // NONE, APPEND, UPDATE\nlet rowToAppend = null;\nlet rowToUpdate = null;\nlet responseMessage = \"\";\nlet replyMarkup = null;\nlet notifyCustomer = false;\nlet customerNotification = null;\n\n// Helper: Find confirmed bookings for a date\nfunction getConfirmedBookingsForDate(dateStr) {\n  return normalizedRows.filter(r => {\n    return r.booking_date === dateStr && r.status.toLowerCase() === \"confirmed\";\n  });\n}\n\n// Helper: Calculate available slots\nfunction getAvailableSlots(dateStr) {\n  const confirmed = getConfirmedBookingsForDate(dateStr);\n  const bookedSlots = new Set(confirmed.map(r => r.time_slot.trim()));\n  return allSlots.filter(s => !bookedSlots.has(s));\n}\n\n// ==============================================================================\n// 1. INTENT: BOOK (Customer or Owner booking)\n// ==============================================================================\nif (targetIntent === \"BOOK\") {\n  const targetDate = targetDateInput || (activeDraft ? activeDraft.booking_date : todayDateStr);\n  const targetTime = targetTimeInput || (activeDraft ? activeDraft.time_slot : null);\n\n  // Validate working days (Mon-Sat, closed Sundays)\n  const dateObj = new Date(targetDate + \"T12:00:00Z\");\n  const dayOfWeek = isNaN(dateObj.getTime()) ? 1 : dateObj.getUTCDay();\n\n  if (dayOfWeek === 0) { // Sunday\n    if (lang === \"tr\") {\n      responseMessage = `💈 <b>${cfg.shopName}</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\nPazar günleri kapalıyız. Pazartesi - Cumartesi 09:00 - 19:00 saatleri arasında hizmet veriyoruz. Lütfen hafta içi veya Cumartesi için bir gün seçiniz. ✂️`;\n    } else {\n      responseMessage = `💈 <b>${cfg.shopName}</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\nWe are closed on Sundays! Our barbers operate Monday through Saturday, 09:00 - 19:00. Please choose a date between Monday and Saturday. ✂️`;\n    }\n  } else if (!targetTime || !allSlots.includes(targetTime)) {\n    // Missing or invalid time -> show available slots for this date\n    const freeSlots = getAvailableSlots(targetDate);\n    if (freeSlots.length === 0) {\n      if (lang === \"tr\") {\n        responseMessage = `💈 <b>${cfg.shopName}</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\n<b>${targetDate}</b> tarihinde uygun boş saat kalmamıştır. Lütfen başka bir gün deneyiniz. ✂️`;\n      } else {\n        responseMessage = `💈 <b>${cfg.shopName}</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\nNo open spots on <b>${targetDate}</b>. Please check another date. ✂️`;\n      }\n    } else {\n      if (lang === \"tr\") {\n        responseMessage = `💈 <b>${cfg.shopName}</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\n📅 <b>${targetDate} Tarihindeki Müsait Saatler:</b>\\n\\n` +\n          freeSlots.map(s => `• <b>${s}</b>`).join(\"\\n\") +\n          `\\n\\nRandevu almak istediğiniz saati aşağıdan seçebilir veya yazabilirsiniz: ✂️`;\n      } else {\n        responseMessage = `💈 <b>${cfg.shopName}</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\n📅 <b>Available Slots for ${targetDate}:</b>\\n\\n` +\n          freeSlots.map(s => `• <b>${s}</b>`).join(\"\\n\") +\n          `\\n\\nSelect a slot below or reply with your preferred time: ✂️`;\n      }\n\n      const buttons = freeSlots.slice(0, 4).map(s => ({\n        text: `✂️ ${s}`,\n        callback_data: `book_slot:${targetDate}_${s}`\n      }));\n      replyMarkup = {\n        inline_keyboard: [buttons]\n      };\n    }\n  } else {\n    // Check slot availability against confirmed bookings\n    const confirmed = getConfirmedBookingsForDate(targetDate);\n    const isOccupied = confirmed.some(r => r.time_slot.trim() === targetTime);\n\n    if (isOccupied) {\n      const freeSlots = getAvailableSlots(targetDate);\n      if (lang === \"tr\") {\n        responseMessage = `💈 <b>${cfg.shopName}</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\nBelirttiğiniz <b>${targetTime}</b> saati doludur.\\n\\n✨ <b>Diğer Müsait Saatler:</b>\\n` +\n          (freeSlots.length > 0 ? freeSlots.map(s => `• <b>${s}</b>`).join(\"\\n\") : \"<i>Bu gün için boş saat kalmadı.</i>\") +\n          `\\n\\nLütfen yukarıdaki müsait saatlerden birini seçiniz: ✂️`;\n      } else {\n        responseMessage = `💈 <b>${cfg.shopName}</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\n<b>${targetTime}</b> on <b>${targetDate}</b> is already booked.\\n\\n✨ <b>Remaining Open Slots:</b>\\n` +\n          (freeSlots.length > 0 ? freeSlots.map(s => `• <b>${s}</b>`).join(\"\\n\") : \"<i>No slots left for this day.</i>\") +\n          `\\n\\nPlease select an alternative time: ✂️`;\n      }\n      \n      if (freeSlots.length > 0) {\n        replyMarkup = {\n          inline_keyboard: [\n            freeSlots.slice(0, 3).map(s => ({\n              text: `✂️ ${s}`,\n              callback_data: `book_slot:${targetDate}_${s}`\n            }))\n          ]\n        };\n      }\n    } else {\n      // Slot is FREE! Check if we have customer's Name and Phone Number\n      const candidatePhone = extractedCustomerPhone || existingPhone;\n      const candidateName = extractedCustomerName || existingName || (cfg.firstName !== \"Guest\" ? cfg.firstName : null);\n      const srvObj = cfg.services.find(s => s.name.toLowerCase().includes(serviceInput.toLowerCase())) || cfg.services[0];\n\n      if (!candidatePhone) {\n        // Customer has NOT provided phone number yet! Save draft in Supabase & ask for contact details\n        const draftId = activeDraft ? activeDraft.booking_id : `DFT-${targetDate.replace(/-/g, \"\")}-${Math.floor(1000 + Math.random() * 9000)}`;\n\n        if (activeDraft) {\n          dbAction = \"UPDATE\";\n          rowToUpdate = {\n            booking_id: activeDraft.booking_id,\n            payload: {\n              booking_date: targetDate,\n              time_slot: targetTime,\n              customer_name: candidateName || cfg.firstName || \"Customer\",\n              service: srvObj.name,\n              price: srvObj.price,\n              status: \"Draft\",\n              notes: \"Awaiting customer phone number\"\n            }\n          };\n        } else {\n          dbAction = \"APPEND\";\n          rowToAppend = {\n            booking_id: draftId,\n            booking_date: targetDate,\n            time_slot: targetTime,\n            customer_name: candidateName || cfg.firstName || \"Customer\",\n            customer_phone: null,\n            telegram_user_id: cfg.userId,\n            telegram_username: cfg.username || \"N/A\",\n            service: srvObj.name,\n            price: srvObj.price,\n            status: \"Draft\",\n            notes: \"Awaiting customer phone number\"\n          };\n        }\n\n        if (lang === \"tr\") {\n          responseMessage = `💈 <b>${cfg.shopName}</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\n` +\n            `✂️ <b>${targetDate} — Saat ${targetTime}</b> randevunuz için müsait!\\n\\n` +\n            `📋 <b>Randevu Kaydınızı Tamamlamak İçin:</b>\\n` +\n            `Lütfen <b>Ad-Soyad</b> ve <b>Telefon Numaranızı</b> iletebilir misiniz?\\n` +\n            `<i>(Örnek: Ahmet Yılmaz, 0532 123 45 67)</i>`;\n        } else {\n          responseMessage = `💈 <b>${cfg.shopName}</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\n` +\n            `✂️ <b>${targetDate} at ${targetTime}</b> is available!\\n\\n` +\n            `📋 <b>To Finalize Your Reservation:</b>\\n` +\n            `Please reply with your <b>Full Name</b> and <b>Phone Number</b>:\\n` +\n            `<i>(e.g., John Miller, +49 170 1234567)</i>`;\n        }\n      } else {\n        // Customer details are present! Confirm reservation immediately\n        const finalBookingId = `BKG-${targetDate.replace(/-/g, \"\")}-${Math.floor(1000 + Math.random() * 9000)}`;\n        const finalCustomerName = candidateName || cfg.firstName || \"Valued Customer\";\n\n        if (activeDraft) {\n          dbAction = \"UPDATE\";\n          rowToUpdate = {\n            booking_id: activeDraft.booking_id,\n            payload: {\n              booking_id: finalBookingId,\n              booking_date: targetDate,\n              time_slot: targetTime,\n              customer_name: finalCustomerName,\n              customer_phone: candidatePhone,\n              service: srvObj.name,\n              price: srvObj.price,\n              status: \"Confirmed\",\n              notes: \"Confirmed with customer phone\"\n            }\n          };\n        } else {\n          dbAction = \"APPEND\";\n          rowToAppend = {\n            booking_id: finalBookingId,\n            booking_date: targetDate,\n            time_slot: targetTime,\n            customer_name: finalCustomerName,\n            customer_phone: candidatePhone,\n            telegram_user_id: cfg.userId,\n            telegram_username: cfg.username || \"N/A\",\n            service: srvObj.name,\n            price: srvObj.price,\n            status: \"Confirmed\",\n            notes: cancellationReasonInput || \"Booked via Telegram AI\"\n          };\n        }\n\n        if (lang === \"tr\") {\n          responseMessage = `🎉 <b>Randevunuz Başarıyla Onaylandı!</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\n` +\n            `👤 <b>Müşteri:</b> ${finalCustomerName}\\n` +\n            `📞 <b>Telefon:</b> ${candidatePhone}\\n` +\n            `💈 <b>Hizmet:</b> ${srvObj.name} (${srvObj.price})\\n` +\n            `📅 <b>Tarih:</b> <b>${targetDate}</b>\\n` +\n            `⏰ <b>Saat:</b> <b>${targetTime}</b>\\n` +\n            `📍 <b>Adres:</b> ${cfg.shopLocation}\\n\\n` +\n            `<i>Sizi ağırlamaktan mutluluk duyacağız!</i> ✂️`;\n        } else {\n          responseMessage = `🎉 <b>Reservation Confirmed!</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\n` +\n            `👤 <b>Customer:</b> ${finalCustomerName}\\n` +\n            `📞 <b>Phone:</b> ${candidatePhone}\\n` +\n            `💈 <b>Service:</b> ${srvObj.name} (${srvObj.price})\\n` +\n            `📅 <b>Date:</b> <b>${targetDate}</b>\\n` +\n            `⏰ <b>Time:</b> <b>${targetTime}</b>\\n` +\n            `📍 <b>Location:</b> ${cfg.shopLocation}\\n\\n` +\n            `<i>Looking forward to your visit!</i> ✂️`;\n        }\n\n        replyMarkup = {\n          inline_keyboard: [\n            [\n              { text: \"❌ Randevuyu İptal Et\", callback_data: `cancel_bkg:${finalBookingId}` },\n              { text: \"📋 Randevularım\", callback_data: \"my_bookings\" }\n            ]\n          ]\n        };\n      }\n    }\n  }\n}\n\n// ==============================================================================\n// 1b. INTENT: PROVIDE_CONTACT (Customer sends Name & Phone Number)\n// ==============================================================================\nelse if (targetIntent === \"PROVIDE_CONTACT\") {\n  const phone = extractedCustomerPhone || existingPhone;\n  const name = extractedCustomerName || existingName || (cfg.firstName !== \"Guest\" ? cfg.firstName : \"Değerli Müşterimiz\");\n\n  if (activeDraft) {\n    // Check if draft's slot is still free\n    const confirmed = getConfirmedBookingsForDate(activeDraft.booking_date);\n    const isOccupied = confirmed.some(r => r.time_slot.trim() === activeDraft.time_slot);\n\n    if (isOccupied) {\n      const freeSlots = getAvailableSlots(activeDraft.booking_date);\n      if (lang === \"tr\") {\n        responseMessage = `💈 <b>${cfg.shopName}</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\n` +\n          `Maalesef <b>${activeDraft.time_slot}</b> saati kısa süre önce doldu.\\n\\n` +\n          `Müsait diğer saatler:\\n` +\n          freeSlots.map(s => `• <b>${s}</b>`).join(\"\\n\") +\n          `\\n\\nLütfen yukarıdaki saatlerden birini seçiniz: ✂️`;\n      } else {\n        responseMessage = `💈 <b>${cfg.shopName}</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\n` +\n          `Unfortunately, <b>${activeDraft.time_slot}</b> was just booked.\\n\\n` +\n          `Other available slots:\\n` +\n          freeSlots.map(s => `• <b>${s}</b>`).join(\"\\n\") +\n          `\\n\\nPlease select another available slot: ✂️`;\n      }\n    } else {\n      const finalBookingId = `BKG-${activeDraft.booking_date.replace(/-/g, \"\")}-${Math.floor(1000 + Math.random() * 9000)}`;\n      dbAction = \"UPDATE\";\n      rowToUpdate = {\n        booking_id: activeDraft.booking_id,\n        payload: {\n          booking_id: finalBookingId,\n          customer_name: name,\n          customer_phone: phone || \"Belirtilmedi\",\n          status: \"Confirmed\",\n          notes: `Customer contact confirmed at ${nowIso}`\n        }\n      };\n\n      if (lang === \"tr\") {\n        responseMessage = `🎉 <b>Randevunuz Başarıyla Onaylandı!</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\n` +\n          `👤 <b>Müşteri:</b> ${name}\\n` +\n          `📞 <b>Telefon:</b> ${phone || \"Kayıtlı\"}\\n` +\n          `💈 <b>Hizmet:</b> ${activeDraft.service} (${activeDraft.price})\\n` +\n          `📅 <b>Tarih:</b> <b>${activeDraft.booking_date}</b>\\n` +\n          `⏰ <b>Saat:</b> <b>${activeDraft.time_slot}</b>\\n` +\n          `📍 <b>Adres:</b> ${cfg.shopLocation}\\n\\n` +\n          `<i>Sizi ağırlamaktan mutluluk duyacağız!</i> ✂️`;\n      } else {\n        responseMessage = `🎉 <b>Reservation Confirmed!</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\n` +\n          `👤 <b>Customer:</b> ${name}\\n` +\n          `📞 <b>Phone:</b> ${phone || \"On File\"}\\n` +\n          `💈 <b>Service:</b> ${activeDraft.service} (${activeDraft.price})\\n` +\n          `📅 <b>Date:</b> <b>${activeDraft.booking_date}</b>\\n` +\n          `⏰ <b>Time:</b> <b>${activeDraft.time_slot}</b>\\n` +\n          `📍 <b>Location:</b> ${cfg.shopLocation}\\n\\n` +\n          `<i>Looking forward to your visit!</i> ✂️`;\n      }\n\n      replyMarkup = {\n        inline_keyboard: [\n          [\n            { text: \"❌ Randevuyu İptal Et\", callback_data: `cancel_bkg:${finalBookingId}` },\n            { text: \"📋 Randevularım\", callback_data: \"my_bookings\" }\n          ]\n        ]\n      };\n    }\n  } else {\n    // No active draft, ask which date & time they want\n    if (lang === \"tr\") {\n      responseMessage = `💈 Teşekkürler <b>${name}</b>! İletişim numaranız (<code>${phone || \"Kayıtlı\"}</code>) alındı.\\n\\nHangi gün ve saat için randevu almak istersiniz? (Örn: Yarın 14:00 veya Cuma 11:00) ✂️`;\n    } else {\n      responseMessage = `💈 Thank you <b>${name}</b>! Your phone number (<code>${phone || \"On File\"}</code>) is noted.\\n\\nWhich date and time would you like to reserve? (e.g., Tomorrow at 2 PM or Friday 11:00) ✂️`;\n    }\n  }\n}\n\n// ==============================================================================\n// 2. INTENT: CANCEL (Customer cancellation)\n// ==============================================================================\nelse if (targetIntent === \"CANCEL\") {\n  // Find active bookings belonging to THIS user only\n  const myActiveBookings = normalizedRows.filter(r => {\n    return r.telegram_user_id === String(cfg.userId) && r.status.toLowerCase() === \"confirmed\";\n  });\n\n  if (myActiveBookings.length === 0) {\n    if (lang === \"tr\") {\n      responseMessage = `💈 <b>${cfg.shopName}</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\nŞu an için aktif bir randevunuz bulunmamaktadır. ✂️`;\n    } else {\n      responseMessage = `💈 <b>${cfg.shopName}</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\nYou have no active reservations to cancel. ✂️`;\n    }\n    replyMarkup = {\n      inline_keyboard: [\n        [{ text: \"📅 Müsait Saatleri Gör\", callback_data: `view_slots:${todayDateStr}` }]\n      ]\n    };\n  } else {\n    let targetBooking = null;\n    if (bookingIdInput) {\n      targetBooking = myActiveBookings.find(b => b.booking_id.toLowerCase() === bookingIdInput.toLowerCase());\n    } else if (targetDateInput) {\n      targetBooking = myActiveBookings.find(b => b.booking_date === targetDateInput);\n    } else {\n      targetBooking = myActiveBookings[0];\n    }\n\n    if (!targetBooking) {\n      if (lang === \"tr\") {\n        responseMessage = `💈 <b>${cfg.shopName}</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\nLütfen iptal etmek istediğiniz randevuyu aşağıdan seçiniz:`;\n      } else {\n        responseMessage = `💈 <b>${cfg.shopName}</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\nPlease select the reservation you wish to cancel:`;\n      }\n      replyMarkup = {\n        inline_keyboard: myActiveBookings.map(b => ([\n          { text: `❌ İptal: ${b.booking_date} @ ${b.time_slot}`, callback_data: `cancel_bkg:${b.booking_id}` }\n        ]))\n      };\n    } else {\n      dbAction = \"UPDATE\";\n      rowToUpdate = {\n        booking_id: targetBooking.booking_id,\n        payload: {\n          status: \"Cancelled by Customer\",\n          notes: `Customer cancelled at ${nowIso}`\n        }\n      };\n\n      if (lang === \"tr\") {\n        responseMessage = `✅ <b>Randevunuz Başarıyla İptal Edildi</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\n` +\n          `• <b>Tarih:</b> ${targetBooking.booking_date}\\n` +\n          `• <b>Saat:</b> ${targetBooking.time_slot}\\n` +\n          `• <b>Hizmet:</b> ${targetBooking.service}\\n\\n` +\n          `<i>Yeni bir randevu almak istediğinizde bize dilediğiniz zaman yazabilirsiniz!</i> 💈`;\n      } else {\n        responseMessage = `✅ <b>Reservation Successfully Cancelled</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\n` +\n          `• <b>Date:</b> ${targetBooking.booking_date}\\n` +\n          `• <b>Time:</b> ${targetBooking.time_slot}\\n` +\n          `• <b>Service:</b> ${targetBooking.service}\\n\\n` +\n          `<i>Feel free to message us whenever you would like to book again!</i> 💈`;\n      }\n\n      replyMarkup = {\n        inline_keyboard: [\n          [{ text: \"📅 Yeni Randevu Al\", callback_data: `view_slots:${todayDateStr}` }]\n        ]\n      };\n    }\n  }\n}\n\n// ==============================================================================\n// 3. INTENT: MY_BOOKINGS (List customer's confirmed appointments)\n// ==============================================================================\nelse if (targetIntent === \"MY_BOOKINGS\") {\n  const myBookings = normalizedRows.filter(r => {\n    return r.telegram_user_id === String(cfg.userId) && r.status.toLowerCase() === \"confirmed\";\n  });\n\n  if (myBookings.length === 0) {\n    if (lang === \"tr\") {\n      responseMessage = `💈 <b>${cfg.shopName}</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\nMerhaba ${cfg.firstName}! Şu an için aktif bir randevunuz bulunmamaktadır.\\n\\nYeni bir randevu oluşturmak için aşağıdaki butona tıklayabilir veya dilediğiniz saati yazabilirsiniz. ✂️`;\n    } else {\n      responseMessage = `💈 <b>${cfg.shopName}</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\nHello ${cfg.firstName}! You have no active reservations right now.\\n\\nTap below to check open slots and book your next cut! ✂️`;\n    }\n    replyMarkup = {\n      inline_keyboard: [\n        [{ text: \"📅 Müsait Saatleri Gör\", callback_data: `view_slots:${todayDateStr}` }]\n      ]\n    };\n  } else {\n    if (lang === \"tr\") {\n      responseMessage = `📋 <b>Aktif Randevularınız (${myBookings.length}):</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\n` +\n        myBookings.map((b, i) => \n          `<b>${i + 1}. ${b.booking_date} — Saat ${b.time_slot}</b>\\n` +\n          `• Hizmet: ${b.service} (${b.price})\\n` +\n          `• Adres: ${cfg.shopLocation}\\n`\n        ).join(\"\\n\") +\n        `\\nİptal etmek istediğiniz randevuyu aşağıdan seçebilirsiniz:`;\n    } else {\n      responseMessage = `📋 <b>Your Active Reservations (${myBookings.length}):</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\n` +\n        myBookings.map((b, i) => \n          `<b>${i + 1}. ${b.booking_date} at ${b.time_slot}</b>\\n` +\n          `• Service: ${b.service} (${b.price})\\n` +\n          `• Location: ${cfg.shopLocation}\\n`\n        ).join(\"\\n\") +\n        `\\nTap below if you wish to cancel:`;\n    }\n\n    replyMarkup = {\n      inline_keyboard: myBookings.map(b => ([\n        { text: `❌ İptal Et (${b.booking_date} @ ${b.time_slot})`, callback_data: `cancel_bkg:${b.booking_id}` }\n      ]))\n    };\n  }\n}\n\n// ==============================================================================\n// 4. INTENT: CHECK_SLOTS (View free slots for any date)\n// ==============================================================================\nelse if (targetIntent === \"CHECK_SLOTS\") {\n  const targetDate = targetDateInput || todayDateStr;\n  const freeSlots = getAvailableSlots(targetDate);\n\n  if (freeSlots.length === 0) {\n    if (lang === \"tr\") {\n      responseMessage = `💈 <b>${cfg.shopName}</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\n<b>${targetDate}</b> tarihinde müsait saatimiz kalmamıştır. Lütfen başka bir gün seçiniz. ✂️`;\n    } else {\n      responseMessage = `💈 <b>${cfg.shopName}</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\nNo open slots on <b>${targetDate}</b>. Please check another date! ✂️`;\n    }\n  } else {\n    if (lang === \"tr\") {\n      responseMessage = `💈 <b>${cfg.shopName}</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\n📅 <b>${targetDate} İçin Müsait Saatler:</b>\\n\\n` +\n        freeSlots.map(s => `• <b>${s}</b>`).join(\"\\n\") +\n        `\\n\\nRandevu almak istediğiniz saati aşağıdan seçebilir veya yazabilirsiniz: ✂️`;\n    } else {\n      responseMessage = `💈 <b>${cfg.shopName}</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\n📅 <b>Available Slots for ${targetDate}:</b>\\n\\n` +\n        freeSlots.map(s => `• <b>${s}</b>`).join(\"\\n\") +\n        `\\n\\nSelect a slot below to reserve: ✂️`;\n    }\n\n    replyMarkup = {\n      inline_keyboard: [\n        freeSlots.slice(0, 4).map(s => ({\n          text: `✂️ ${s}`,\n          callback_data: `book_slot:${targetDate}_${s}`\n        }))\n      ]\n    };\n  }\n}\n\n// ==============================================================================\n// 5. INTENT: ADMIN_LIST_ALL (Barbershop Owner Executive Roster)\n// ==============================================================================\nelse if (targetIntent === \"ADMIN_LIST_ALL\") {\n  if (!cfg.isOwner) {\n    responseMessage = `⛔ <b>Yetkisiz İşlem:</b> Bu işlem yalnızca işletme sahibine özeldir.`;\n  } else {\n    const targetDate = targetDateInput || todayDateStr;\n    const dateBookings = normalizedRows.filter(r => r.booking_date === targetDate);\n    const confirmed = dateBookings.filter(r => r.status.toLowerCase() === \"confirmed\");\n    const cancelled = dateBookings.filter(r => r.status.toLowerCase().includes(\"cancel\"));\n\n    responseMessage = `👑 <b>Günlük Randevu Listesi (${targetDate})</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\n` +\n      `📊 <b>Toplam Randevu:</b> ${confirmed.length} | <b>İptal:</b> ${cancelled.length}\\n\\n`;\n\n    if (confirmed.length === 0) {\n      responseMessage += `<i>Bu tarihte kayıtlı randevu bulunmamaktadır.</i>`;\n    } else {\n      responseMessage += confirmed.map(b => \n        `⏰ <b>${b.time_slot}</b> — <b>${b.customer_name}</b> (📞 ${b.customer_phone || \"Belirtilmedi\"}) [${b.telegram_username || \"N/A\"}]\\n` +\n        `   • Hizmet: ${b.service} [${b.price}]\\n` +\n        `   • Randevu No: <code>${b.booking_id}</code>`\n      ).join(\"\\n\\n\");\n    }\n\n    if (confirmed.length > 0) {\n      replyMarkup = {\n        inline_keyboard: confirmed.map(b => ([\n          { text: `⚠️ İptal: ${b.customer_name} (${b.time_slot})`, callback_data: `cancel_bkg:${b.booking_id}` }\n        ]))\n      };\n    }\n  }\n}\n\n// ==============================================================================\n// 6. INTENT: ADMIN_CANCEL (Owner cancels an appointment -> Alerts the Customer!)\n// ==============================================================================\nelse if (targetIntent === \"ADMIN_CANCEL\") {\n  if (!cfg.isOwner) {\n    responseMessage = `⛔ <b>Yetkisiz İşlem:</b> İptal işlemi yalnızca işletme sahibine özeldir.`;\n  } else {\n    const matchingBookings = normalizedRows.filter(r => {\n      const st = r.status.toLowerCase();\n      if (st !== \"confirmed\") return false;\n      if (bookingIdInput && r.booking_id.toLowerCase() === bookingIdInput.toLowerCase()) return true;\n      if (targetDateInput && targetTimeInput && r.booking_date === targetDateInput && r.time_slot === targetTimeInput) return true;\n      return false;\n    });\n\n    if (matchingBookings.length === 0) {\n      responseMessage = `⚠️ Belirtilen kriterlere uygun aktif bir randevu bulunamadı.`;\n    } else {\n      const bkg = matchingBookings[0];\n      const customerUserId = String(bkg.telegram_user_id || \"\");\n      const customerName = bkg.customer_name || \"Değerli Müşterimiz\";\n      const reason = cancellationReasonInput || \"İşletme çalışma takvimi düzenlemesi\";\n\n      dbAction = \"UPDATE\";\n      rowToUpdate = {\n        booking_id: bkg.booking_id,\n        payload: {\n          status: \"Cancelled by Owner\",\n          notes: `Owner cancelled: ${reason} (at ${nowIso})`\n        }\n      };\n\n      // Message for the Owner\n      responseMessage = `👑 <b>Randevu İptal Edildi</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\n` +\n        `👤 <b>Müşteri:</b> ${customerName}\\n` +\n        `📅 <b>Randevu:</b> ${bkg.booking_date} — Saat ${bkg.time_slot}\\n` +\n        `✉️ Müşteriye otomatik bilgilendirme mesajı gönderildi.`;\n\n      // Customer Proactive Telegram Notification\n      if (customerUserId && customerUserId !== cfg.ownerUserId) {\n        notifyCustomer = true;\n        customerNotification = {\n          customerChatId: customerUserId,\n          alertMessage: `⚠️ <b>Randevu Bilgilendirmesi</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\n` +\n            `Sayın <b>${customerName}</b>,\\n\\n` +\n            `<b>${cfg.shopName}</b> bünyesindeki randevunuz işletme yönetimi tarafından iptal edilmiştir:\\n\\n` +\n            `• <b>Tarih:</b> ${bkg.booking_date}\\n` +\n            `• <b>Saat:</b> ${bkg.time_slot}\\n` +\n            `• <b>Hizmet:</b> ${bkg.service}\\n\\n` +\n            `Yaşanan aksaklık için özür dileriz. Dilediğiniz zaman bize mesaj atarak yeni bir randevu saati oluşturabilirsiniz! 💈`\n        };\n      }\n    }\n  }\n}\n\n// ==============================================================================\n// 7. INTENT: HELP_GREETING or GENERAL INQUIRY\n// ==============================================================================\nelse {\n  if (cfg.isOwner) {\n    responseMessage = `👑 <b>Hoş Geldiniz! (Yönetici Paneli)</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\n` +\n      `Yapabileceğiniz işlemler:\\n` +\n      `• <i>\"Yarınki randevuları listele\"</i>\\n` +\n      `• <i>\"Ali'nin 14:00 randevusunu iptal et\"</i>\\n\\n` +\n      `Aşağıdaki butonları kullanarak hızlıca işlem yapabilirsiniz:`;\n    replyMarkup = {\n      inline_keyboard: [\n        [\n          { text: \"📋 Günlük Randevular\", callback_data: \"admin_today\" },\n          { text: \"✂️ Müsait Saatler\", callback_data: `view_slots:${todayDateStr}` }\n        ]\n      ]\n    };\n  } else {\n    if (lang === \"tr\") {\n      responseMessage = `💈 <b>Crown & Blade Barbershop'a Hoş Geldiniz!</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\n` +\n        `Randevunuzu hemen oluşturmak için istediğiniz gün ve saati yazabilirsiniz.\\n\\n` +\n        `✂️ <b>Hizmetlerimiz:</b>\\n` +\n        cfg.services.map(s => `• <b>${s.name}</b> — ${s.price} (${s.duration})`).join(\"\\n\") +\n        `\\n\\n📍 <i>${cfg.shopLocation}</i>`;\n      replyMarkup = {\n        inline_keyboard: [\n          [\n            { text: \"📅 Müsait Saatleri Gör\", callback_data: `view_slots:${todayDateStr}` },\n            { text: \"📋 Randevularım\", callback_data: \"my_bookings\" }\n          ]\n        ]\n      };\n    } else {\n      responseMessage = `💈 <b>Welcome to Crown & Blade Barbershop!</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\n` +\n        `Book your grooming appointment in seconds. Simply reply with your preferred date and time.\\n\\n` +\n        `✂️ <b>Services:</b>\\n` +\n        cfg.services.map(s => `• <b>${s.name}</b> — ${s.price} (${s.duration})`).join(\"\\n\") +\n        `\\n\\n📍 <i>${cfg.shopLocation}</i>`;\n      replyMarkup = {\n        inline_keyboard: [\n          [\n            { text: \"📅 View Open Spots\", callback_data: `view_slots:${todayDateStr}` },\n            { text: \"📋 My Reservations\", callback_data: \"my_bookings\" }\n          ]\n        ]\n      };\n    }\n  }\n}\n\nreturn [{\n  json: {\n    ...cfg,\n    dbAction: dbAction,\n    rowToAppend: rowToAppend,\n    rowToUpdate: rowToUpdate,\n    responseMessage: responseMessage,\n    replyMarkup: replyMarkup,\n    notifyCustomer: notifyCustomer,\n    customerNotification: customerNotification\n  }\n}];\n"
+      },
+      "id": "reservation-core-engine",
+      "name": "Reservation Core Engine",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1720,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.dbAction }}",
+                    "rightValue": "APPEND",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.dbAction }}",
+                    "rightValue": "UPDATE",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "switch-db-action",
+      "name": "Route Database Action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1960,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Central Brand & Security Guard').first().json.supabaseUrl }}/rest/v1/bookings",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $('Central Brand & Security Guard').first().json.supabaseKey }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Central Brand & Security Guard').first().json.supabaseKey }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.rowToAppend) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "supabase-insert-booking",
+      "name": "Supabase: Insert Booking",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2220,
+        240
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $('Central Brand & Security Guard').first().json.supabaseUrl }}/rest/v1/bookings?booking_id=eq.{{ $json.rowToUpdate.booking_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $('Central Brand & Security Guard').first().json.supabaseKey }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Central Brand & Security Guard').first().json.supabaseKey }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.rowToUpdate.payload || { status: $json.rowToUpdate.status, notes: $json.rowToUpdate.notes }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "supabase-update-booking",
+      "name": "Supabase: Update Booking Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2220,
+        420
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $('Central Brand & Security Guard').first().json.botToken }}/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $('Reservation Core Engine').first().json.chatId, text: $('Reservation Core Engine').first().json.responseMessage, parse_mode: 'HTML', reply_markup: $('Reservation Core Engine').first().json.replyMarkup || undefined }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "dispatch-user-feedback",
+      "name": "Dispatch User Feedback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2480,
+        400
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-customer-alert",
+              "leftValue": "={{ $('Reservation Core Engine').first().json.notifyCustomer }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-notify-customer",
+      "name": "Has Customer Notification?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2720,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $('Central Brand & Security Guard').first().json.botToken }}/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $('Reservation Core Engine').first().json.customerNotification.customerChatId, text: $('Reservation Core Engine').first().json.customerNotification.alertMessage, parse_mode: 'HTML' }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "send-customer-alert",
+      "name": "Send Urgent Alert to Affected Customer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2960,
+        320
+      ],
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Telegram Trigger (Customer & Owner)": {
+      "main": [
+        [
+          {
+            "node": "Central Brand & Security Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Central Brand & Security Guard": {
+      "main": [
+        [
+          {
+            "node": "Is Button Callback?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Button Callback?": {
+      "main": [
+        [
+          {
+            "node": "Acknowledge Button Click",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Gemini NLP Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Acknowledge Button Click": {
+      "main": [
+        [
+          {
+            "node": "Parse Button Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Button Action": {
+      "main": [
+        [
+          {
+            "node": "Supabase: Read All Bookings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Gemini NLP Prompt": {
+      "main": [
+        [
+          {
+            "node": "Gemini: Extract Intent & Entities",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini: Extract Intent & Entities": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Intent & Normalizer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Intent & Normalizer": {
+      "main": [
+        [
+          {
+            "node": "Supabase: Read All Bookings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase: Read All Bookings": {
+      "main": [
+        [
+          {
+            "node": "Reservation Core Engine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reservation Core Engine": {
+      "main": [
+        [
+          {
+            "node": "Route Database Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Database Action": {
+      "main": [
+        [
+          {
+            "node": "Supabase: Insert Booking",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Supabase: Update Booking Status",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Dispatch User Feedback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase: Insert Booking": {
+      "main": [
+        [
+          {
+            "node": "Dispatch User Feedback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase: Update Booking Status": {
+      "main": [
+        [
+          {
+            "node": "Dispatch User Feedback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch User Feedback": {
+      "main": [
+        [
+          {
+            "node": "Has Customer Notification?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Customer Notification?": {
+      "main": [
+        [
+          {
+            "node": "Send Urgent Alert to Affected Customer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "timezone": "Europe/Istanbul"
+  }
+}

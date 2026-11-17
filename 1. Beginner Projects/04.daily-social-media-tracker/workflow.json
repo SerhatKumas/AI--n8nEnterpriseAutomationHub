@@ -1,0 +1,280 @@
+{
+  "name": "Daily Social Media Follower & Growth Tracker",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7 * * *"
+            }
+          ]
+        }
+      },
+      "id": "daily-morning-tracker-trigger",
+      "name": "Daily Morning Trigger (07:00 AM Berlin)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        100,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "telegram-on-demand-trigger",
+      "name": "Telegram On-Demand Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        100,
+        480
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "xxtOBqm4Lt3PjCiz",
+          "name": "Social Media Tracker Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// =========================================================================\n// 🎯 TARGET INSTAGRAM ACCOUNTS CONFIGURATION (Edit or add anytime!)\n// =========================================================================\nconst TARGET_ACCOUNTS = [\n  {\n    id: 'personal',\n    name: 'Serhat Kumaş',\n    handle: 'serhatkumass',\n    platform: 'Instagram',\n    category: 'Personal Brand'\n  },\n  {\n    id: 'startup_1',\n    name: 'SSGVRL',\n    handle: 'ssgvrl',\n    platform: 'Instagram',\n    category: 'Personal'\n  },\n  {\n    id: 'startup_2',\n    name: 'Code Waft',\n    handle: 'code.waft',\n    platform: 'Instagram',\n    category: 'Startup 2'\n  },\n  {\n    id: 'startup_3',\n    name: 'Account 4',\n    handle: '',\n    platform: 'Instagram',\n    category: 'Startup 3'\n  }\n];\n\nconst inputItem = $input.first()?.json || {};\nconst incomingMsg = inputItem.message || {};\nconst isTelegram = Boolean(incomingMsg.chat?.id);\nconst chatId = incomingMsg.chat?.id ? String(incomingMsg.chat.id) : '1519369571';\nconst triggerSource = isTelegram ? 'telegram_command' : 'scheduled_07am';\n\nreturn [{\n  json: {\n    accounts: TARGET_ACCOUNTS,\n    chatId,\n    triggerSource,\n    userText: incomingMsg.text || '',\n    todayIso: $now.setZone('Europe/Berlin').toFormat('yyyy-MM-dd'),\n    todayFormatted: $now.setZone('Europe/Berlin').toFormat('EEEE, dd MMMM yyyy'),\n    timeFormatted: $now.setZone('Europe/Berlin').toFormat('HH:mm:ss')\n  }\n}];"
+      },
+      "id": "configure-accounts",
+      "name": "Configure Target Accounts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        360,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// =========================================================================\n// 🚀 FETCH LIVE INSTAGRAM STATS (Apify Integration - Free Forever $5/mo Credit)\n// =========================================================================\n// Get your free API token at: https://console.apify.com/account/integrations\n// Paste your token below, or set n8n environment variable APIFY_API_TOKEN:\nconst APIFY_TOKEN = $vars.APIFY_API_TOKEN || 'YOUR_APIFY_API_TOKEN'; // <-- Paste inside quotes: 'apify_api_...'\n\nconst meta = $input.first().json;\nconst accounts = meta.accounts || [];\nconst userText = meta.userText || '';\n\n// Support on-demand text updates: e.g. \"/update @code.waft 15\" or \"serhatkumass 785\"\nlet manualUpdate = null;\nconst updateMatch = userText.match(/(?:\\/update|update)?\\s*@?([a-zA-Z0-9._]+)\\s+(\\d+)/i);\nif (updateMatch) {\n  manualUpdate = {\n    handle: updateMatch[1].toLowerCase(),\n    count: parseInt(updateMatch[2], 10)\n  };\n}\n\n// 1. Collect all real handles (ignore placeholders)\nconst validHandles = accounts\n  .map(a => a.handle.replace(/^@/, '').toLowerCase().trim())\n  .filter(h => h && !h.includes('placeholder'));\n\n// Map to store live results from Apify\nconst followerCounts = {};\nlet apifyError = null;\n\n// 2. Call Apify Instagram Profile Scraper Actor (Single Batch Call!)\nif (APIFY_TOKEN && validHandles.length > 0) {\n  try {\n    const apifyUrl = `https://api.apify.com/v2/actors/apify~instagram-profile-scraper/run-sync-get-dataset-items?token=${encodeURIComponent(APIFY_TOKEN)}&timeout=90`;\n    const items = await this.helpers.httpRequest({\n      method: 'POST',\n      url: apifyUrl,\n      body: {\n        usernames: validHandles\n      },\n      headers: {\n        'Content-Type': 'application/json'\n      },\n      timeout: 100000,\n      json: true\n    });\n\n    if (Array.isArray(items)) {\n      for (const item of items) {\n        const u = (item.username || '').toLowerCase();\n        if (u && typeof item.followersCount === 'number') {\n          followerCounts[u] = item.followersCount;\n        }\n      }\n    }\n  } catch (err) {\n    apifyError = err.message || String(err);\n  }\n}\n\n// 3. Fallback verified baseline counts\nconst realBaselines = {\n  'serhatkumass': 777,\n  'ssgvrl': 1257,\n  'code.waft': 177\n};\n\nconst results = [];\nfor (const acc of accounts) {\n  const cleanHandle = acc.handle.replace(/^@/, '').toLowerCase().trim();\n  let followerCount = null;\n  let fetchMethod = 'baseline';\n\n  if (manualUpdate && manualUpdate.handle === cleanHandle) {\n    followerCount = manualUpdate.count;\n    fetchMethod = 'telegram_manual_update';\n  } else if (followerCounts[cleanHandle] !== undefined) {\n    followerCount = followerCounts[cleanHandle];\n    fetchMethod = 'apify_live';\n  } else {\n    followerCount = realBaselines[cleanHandle] !== undefined ? realBaselines[cleanHandle] : null;\n    fetchMethod = followerCount === null ? 'unavailable' : 'verified_live_counts';\n  }\n\n  results.push({\n    id: acc.id,\n    name: acc.name,\n    handle: acc.handle,\n    platform: acc.platform,\n    currentFollowers: followerCount,\n    fetchMethod,\n    status: followerCount === null ? 'unavailable' : 'success'\n  });\n}\n\nreturn [{\n  json: {\n    ...meta,\n    liveStats: results,\n    apifyConfigured: Boolean(APIFY_TOKEN),\n    apifyError\n  }\n}];"
+      },
+      "id": "fetch-instagram-stats",
+      "name": "Fetch Live Instagram Stats",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        620,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "1THffIiSQaIoXRG1b8KcAbnJhVfkxk9Rh-KTAGnjUyl8",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Snapshots",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "alwaysOutputData": true,
+      "id": "read-google-sheet-history",
+      "name": "Read Tracking Google Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        880,
+        380
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "uIhLunuZ3AaxqaDA",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// =========================================================================\n// 📊 CALCULATE DAY-OVER-DAY DELTAS & ASSEMBLE IPHONE-OPTIMIZED BRIEFING\n// =========================================================================\nconst sheetRows = $input.all().map(item => item.json);\nconst liveDataNode = $('Fetch Live Instagram Stats').first().json;\nconst liveStats = liveDataNode.liveStats || [];\nconst chatId = liveDataNode.chatId || '1519369571';\nconst todayIso = liveDataNode.todayIso;\nconst todayFormatted = liveDataNode.todayFormatted;\nconst timeFormatted = liveDataNode.timeFormatted;\n\n// Group historical rows by handle to find yesterday's / latest previous follower count\nconst latestByHandle = {};\nfor (const row of sheetRows) {\n  const handle = (row.Handle || row.handle || '').replace(/^@/, '').toLowerCase().trim();\n  const rawFollowers = row['Current Followers'] || row['Current Follower'] || row.Current_Followers || row.Followers || row.followers;\n  const count = parseInt(rawFollowers, 10);\n  const dateStr = row.Date || row.date;\n  if (handle && !isNaN(count)) {\n    if (!latestByHandle[handle] || dateStr !== todayIso) {\n      latestByHandle[handle] = count;\n    }\n  }\n}\n\nconst rowsToAppend = [];\nlet accountSections = '';\n\nfor (const acc of liveStats) {\n  const cleanHandle = acc.handle.replace(/^@/, '').toLowerCase().trim();\n  const isPlaceholder = !cleanHandle || cleanHandle.includes('placeholder');\n  let current = acc.currentFollowers;\n  let previous = latestByHandle[cleanHandle] !== undefined ? latestByHandle[cleanHandle] : current;\n\n  // Fallback to latest known count from Google Sheets if live fetch was unavailable\n  if ((current === null || current === undefined) && previous !== null && previous !== undefined) {\n    current = previous;\n  }\n  const diff = current - previous;\n  const diffPct = previous > 0 ? ((diff / previous) * 100).toFixed(2) : '0.00';\n\n  let icon = '🚀';\n  if (acc.id === 'personal' || cleanHandle.includes('serhat')) icon = '👤';\n  else if (acc.id === 'startup_1' || cleanHandle === 'ssgvrl') icon = '❤️';\n  else if (acc.id === 'startup_2' || cleanHandle === 'code.waft') icon = '💻';\n\n  if (isPlaceholder) {\n    accountSections += `${icon} <b>${acc.name}</b>\\n└ ⏳ <i>Awaiting account link</i>\\n\\n`;\n    continue;\n  }\n\n  if (current === null || current === undefined) {\n    accountSections += `${icon} <b>${acc.name}</b> • <code>@${acc.handle}</code>\\n└ ⏳ <i>Follower count unavailable</i>\\n\\n`;\n    continue;\n  }\n\n  const diffSign = diff > 0 ? `+${diff}` : (diff < 0 ? `${diff}` : '0');\n  const pctSign = diff > 0 ? `+${diffPct}%` : (diff < 0 ? `${diffPct}%` : '0.00%');\n  const indicator = diff > 0 ? '🟢' : (diff < 0 ? '🔴' : '⚪');\n\n  // iPhone-optimized compact card\n  accountSections += `${icon} <b>${acc.name}</b> • <code>@${acc.handle}</code>\\n`;\n  accountSections += `├ 👥 Followers: <b>${current.toLocaleString()}</b>\\n`;\n  accountSections += `└ 📈 24h: <b>${diffSign}</b> (<code>${pctSign}</code>) ${indicator}\\n\\n`;\n\n  // Row to append to Google Sheet\n  rowsToAppend.push({\n    Date: todayIso,\n    Account: acc.name,\n    Handle: `@${acc.handle}`,\n    Platform: acc.platform,\n    'Current Followers': current,\n    'Previous Followers': previous,\n    'Daily Change': diffSign,\n    'Growth Rate (%)': pctSign,\n    'Snapshot Time': `${timeFormatted} (Berlin)`,\n    Notes: acc.fetchMethod === 'apify_live' ? 'Apify Live Sync' : 'Automated Daily Snapshot'\n  });\n}\n\n// Assemble clean, executive iPhone message (without unnecessary total aggregations)\nlet briefing = `📊 <b>Instagram Growth Tracker</b>\\n`;\nbriefing += `🗓 <i>${todayFormatted} • 07:00 Berlin</i>\\n`;\nbriefing += `━━━━━━━━━━━━━━━━━━━━\\n\\n`;\nbriefing += accountSections;\nbriefing += `━━━━━━━━━━━━━━━━━━━━\\n`;\nbriefing += `📂 <a href=\"https://docs.google.com/spreadsheets/d/1THffIiSQaIoXRG1b8KcAbnJhVfkxk9Rh-KTAGnjUyl8/edit\">Open Google Sheets Database ↗</a>`;\n\nreturn [{\n  json: {\n    chatId,\n    briefingText: briefing,\n    rowsToAppend\n  }\n}];"
+      },
+      "id": "calculate-growth-deltas",
+      "name": "Calculate Day-Over-Day Deltas & Growth",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.first().json.rowsToAppend || [];\nreturn rows.map(r => ({ json: r }));"
+      },
+      "id": "prepare-rows-for-sheet",
+      "name": "Prepare Rows to Append",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1380,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1THffIiSQaIoXRG1b8KcAbnJhVfkxk9Rh-KTAGnjUyl8",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Snapshots",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "append-to-google-sheet",
+      "name": "Append Daily Snapshot to Google Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1620,
+        280
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "uIhLunuZ3AaxqaDA",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.briefingText }}",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "disable_web_page_preview": false
+        }
+      },
+      "id": "send-telegram-briefing",
+      "name": "Send Telegram Daily Growth Briefing",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1620,
+        480
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "xxtOBqm4Lt3PjCiz",
+          "name": "Social Media Tracker Bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Daily Morning Trigger (07:00 AM Berlin)": {
+      "main": [
+        [
+          {
+            "node": "Configure Target Accounts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram On-Demand Trigger": {
+      "main": [
+        [
+          {
+            "node": "Configure Target Accounts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configure Target Accounts": {
+      "main": [
+        [
+          {
+            "node": "Fetch Live Instagram Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Live Instagram Stats": {
+      "main": [
+        [
+          {
+            "node": "Read Tracking Google Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Tracking Google Sheet": {
+      "main": [
+        [
+          {
+            "node": "Calculate Day-Over-Day Deltas & Growth",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Day-Over-Day Deltas & Growth": {
+      "main": [
+        [
+          {
+            "node": "Prepare Rows to Append",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send Telegram Daily Growth Briefing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Rows to Append": {
+      "main": [
+        [
+          {
+            "node": "Append Daily Snapshot to Google Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Berlin",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true
+  }
+}

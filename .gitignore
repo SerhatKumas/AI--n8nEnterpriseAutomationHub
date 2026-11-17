@@ -1,0 +1,65 @@
+# ==============================================================================
+# n8n Automation Hub — .gitignore
+# ==============================================================================
+
+# Environment & Secrets (Never commit production credentials)
+**/.env
+**/.env.local
+**/.env.*.local
+!**/.env.example
+
+# Private Keys, Certificates & Tokens
+*.pem
+*.key
+*.crt
+id_rsa
+id_ed25519
+*.secret
+
+# SQLite Databases & WAL Logs
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.journal
+
+# macOS system files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows & Linux system files
+Thumbs.db
+ehthumbs.db
+[Dd]esktop.ini
+
+# Editor & IDE configs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs & Debugging
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Node dependencies
+node_modules/
+package-lock.json
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+venv/
+ENV/
+
+# Temporary files
+/tmp/
+*.tmp

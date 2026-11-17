@@ -1,0 +1,629 @@
+{
+  "name": "Instagram Lead Responder — Polling (Every 2 min)",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "const CONFIG = $('Live Polling Configuration').first().json.config;\n// Best effort only: static data is not an atomic lock across executions.\n// Mark completion after successful API calls, never before attempting delivery.\nconst state = $getWorkflowStaticData('global');\nstate.processedComments ??= {};\nconst now = Date.now();\nfor (const [id, time] of Object.entries(state.processedComments)) {\n  if (now - time > 86400000) delete state.processedComments[id];\n}\nconst seen = new Set();\nconst output = [];\nconst normalize = value => String(value).normalize('NFKD').replace(/\\p{M}/gu, '').toUpperCase();\nconst escapeRegex = value => value.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');\nconst add = (json, item) => output.push({ json, pairedItem: { item } });\nfor (const [index, input] of $input.all().entries()) {\n  const body = input.json.body ?? input.json;\n  if (body.object !== 'instagram') {\n    add({ matched: false, reason: 'not_instagram' }, index);\n    continue;\n  }\n  for (const entry of Array.isArray(body.entry) ? body.entry : []) {\n    if (String(entry.id) !== CONFIG.instagramAccountId) {\n      add({ matched: false, reason: 'account_not_targeted' }, index);\n      continue;\n    }\n    const changes = Array.isArray(entry.changes) ? entry.changes\n      : (entry.field && entry.value ? [{ field: entry.field, value: entry.value }] : []);\n    for (const change of changes) {\n      const ignore = reason => add({ matched: false, reason }, index);\n      if (change.field !== 'comments') { ignore('not_a_comment_field'); continue; }\n      const value = change.value || {};\n      // Facebook/Unified and Instagram Login notifications can use different keys.\n      const commentId = String(value.id || value.comment_id || '');\n      const commentText = String(value.text || '').trim();\n      const fromId = String(value.from?.id || '');\n      const cleanUsername = String(value.from?.username || 'anonymous').replace(/^@/, '');\n      const mediaId = String(value.media?.id || '');\n      if (!commentId || !commentText) { ignore('missing_comment_data'); continue; }\n      if (CONFIG.targetMediaId && mediaId !== CONFIG.targetMediaId) { ignore('media_id_not_targeted'); continue; }\n      if (fromId === CONFIG.instagramAccountId || cleanUsername.toLowerCase() === CONFIG.instagramUsername.toLowerCase()) {\n        ignore('self_bot_comment_ignored'); continue;\n      }\n      if (state.processedComments[commentId] || seen.has(commentId)) { ignore('duplicate_comment'); continue; }\n      seen.add(commentId);\n      const text = normalize(commentText);\n      const matchedKeyword = CONFIG.triggerKeywords.find(keyword =>\n        new RegExp(`(^|[^\\\\p{L}\\\\p{N}_])${escapeRegex(normalize(keyword))}($|[^\\\\p{L}\\\\p{N}_])`, 'u').test(text));\n      if (!matchedKeyword) { ignore('keyword_not_matched'); continue; }\n      add({\n        matched: true, commentId, commentText, fromId, cleanUsername,\n        username: '@' + cleanUsername, mediaId, matchedKeyword,\n        publicReplyText: 'Thanks for your interest! We will send the details by DM.',\n        dmText: `Hey @${cleanUsername}! 👋 Thanks for checking out ${CONFIG.startupName}.\\n\\nYou commented \"${matchedKeyword}\" — here is your direct access link:\\n👉 ${CONFIG.startupLink}\\n\\nLet us know if you have any questions!`,\n        timestamp: new Date(now).toISOString(),\n        spreadsheetId: CONFIG.spreadsheetId, sheetName: CONFIG.sheetName,\n        chatId: CONFIG.telegramChatId, config: CONFIG,\n      }, index);\n    }\n  }\n}\nreturn output.length ? output : [{ json: { matched: false, reason: 'no_comment_events' }, pairedItem: { item: 0 } }];\n"
+      },
+      "id": "parse-comment-event",
+      "name": "Filter & Parse Comment Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1660,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.matched }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-keyword-matched",
+      "name": "Is Keyword Matched?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1920,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $(\"Filter & Parse Comment Event\").item.json.config.graphBaseUrl + \"/\" + $(\"Filter & Parse Comment Event\").item.json.commentId + \"/replies\" }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { message: $json.body?.message_id ? \"Sent you the Codewaft link in a DM! Please check Message Requests too. 🚀\" : \"Thanks for your interest! Here is the Codewaft link: \" + $(\"Filter & Parse Comment Event\").item.json.config.startupLink } }}",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        },
+        "authentication": "none",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_INSTAGRAM_GRAPH_API_TOKEN"
+            }
+          ]
+        },
+        "sendHeaders": true
+      },
+      "id": "reply-public-comment",
+      "name": "Post Public Comment Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2700,
+        400
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Filter & Parse Comment Event').item.json.config.graphBaseUrl + \"/\" + $('Filter & Parse Comment Event').item.json.config.instagramAccountId + \"/messages\" }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { recipient: { comment_id: $('Filter & Parse Comment Event').item.json.commentId }, message: { text: $('Filter & Parse Comment Event').item.json.dmText } } }}",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        },
+        "authentication": "none",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_INSTAGRAM_GRAPH_API_TOKEN"
+            }
+          ]
+        },
+        "sendHeaders": true
+      },
+      "id": "send-instagram-dm",
+      "name": "Send Personalized Instagram DM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2440,
+        400
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Run once per comment item — keeps batched comments separate.\nconst meta = $('Filter & Parse Comment Event').item.json;\nconst dmResult    = $('Send Personalized Instagram DM').item.json;\nconst replyResult = $('Post Public Comment Reply').item.json;\nconst dm    = dmResult.body    ?? dmResult;\nconst reply = replyResult.body ?? replyResult;\nconst dmAccepted    = !dm.error    && Boolean(dm.message_id);\nconst replyAccepted = !reply.error && Boolean(reply.id);\nconst errorText = r => String(r.error?.message || r.error || 'No success ID returned').slice(0, 200);\nconst dmStatus     = dmAccepted    ? '✅ Accepted by Meta' : '❌ Failed: ' + errorText(dm);\nconst publicStatus = replyAccepted ? '✅ Accepted by Meta' : '❌ Failed: ' + errorText(reply);\n\nconst escapeHtml = v => String(v)\n  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n\nconst telegramText = [\n  '🚀 <b>New Instagram Lead!</b>',\n  '━━━━━━━━━━━━━━━━━━━━━━━━',\n  '',\n  '👤 <b>User</b>',\n  '   <a href=\"https://instagram.com/' + escapeHtml(meta.cleanUsername) + '\">@' + escapeHtml(meta.cleanUsername) + '</a>',\n  '',\n  '💬 <b>Comment</b>',\n  '   \"<i>' + escapeHtml(meta.commentText) + '</i>\"',\n  '',\n  '🎯 <b>Triggered by keyword:</b> <code>' + escapeHtml(meta.matchedKeyword) + '</code>',\n  '',\n  '━━━━━━━━━━━━━━━━━━━━━━━━',\n  '',\n  '📣 <b>Public Reply</b>',\n  '   ' + escapeHtml(publicStatus),\n  '',\n  '📩 <b>Direct Message</b>',\n  '   ' + escapeHtml(dmStatus),\n  '',\n  '━━━━━━━━━━━━━━━━━━━━━━━━',\n  '',\n  '🕐 <b>Time:</b> ' + escapeHtml(meta.timestamp || new Date().toISOString()),\n  '📊 <a href=\"https://docs.google.com/spreadsheets/d/' + meta.spreadsheetId + '/edit\">Open Leads Sheet ↗</a>',\n].join('\\n');\n\nreturn { json: {\n  spreadsheetId:        meta.spreadsheetId,\n  sheetName:            meta.sheetName,\n  chatId:               meta.chatId,\n  telegramText,\n  Timestamp:            meta.timestamp,\n  'Instagram Username': meta.username,\n  'User ID':            meta.fromId,\n  'Trigger Keyword':    meta.matchedKeyword,\n  'Comment Text':       meta.commentText,\n  'Media ID':           meta.mediaId,\n  'Comment ID':         meta.commentId,\n  'Public Reply':       publicStatus,\n  'DM Status':          dmStatus,\n  'Lead Status':        dmAccepted ? 'New Lead' : 'Needs Retry',\n} };\n"
+      },
+      "id": "prepare-lead-row",
+      "name": "Prepare Google Sheets Lead Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2960,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $json.spreadsheetId }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $json.sheetName }}",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Timestamp": "={{ $json[\"Timestamp\"] }}",
+            "Instagram Username": "={{ $json[\"Instagram Username\"] }}",
+            "User ID": "={{ $json[\"User ID\"] }}",
+            "Trigger Keyword": "={{ $json[\"Trigger Keyword\"] }}",
+            "Comment Text": "={{ $json[\"Comment Text\"] }}",
+            "Media ID": "={{ $json[\"Media ID\"] }}",
+            "Comment ID": "={{ $json[\"Comment ID\"] }}",
+            "Public Reply": "={{ $json[\"Public Reply\"] }}",
+            "DM Status": "={{ $json[\"DM Status\"] }}",
+            "Lead Status": "={{ $json[\"Lead Status\"] }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Timestamp",
+              "displayName": "Timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Instagram Username",
+              "displayName": "Instagram Username",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "User ID",
+              "displayName": "User ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Trigger Keyword",
+              "displayName": "Trigger Keyword",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Comment Text",
+              "displayName": "Comment Text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Media ID",
+              "displayName": "Media ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Comment ID",
+              "displayName": "Comment ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Public Reply",
+              "displayName": "Public Reply",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "DM Status",
+              "displayName": "DM Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Lead Status",
+              "displayName": "Lead Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "append-lead-to-sheet",
+      "name": "Append Lead to Google Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        3220,
+        300
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "uIhLunuZ3AaxqaDA",
+          "name": "Google Sheets account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.telegramText }}",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "disable_web_page_preview": false
+        }
+      },
+      "id": "send-telegram-lead-alert",
+      "name": "Send Telegram Lead Alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3220,
+        500
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "LtySHPvijTOvnn8m",
+          "name": "Instagram Comment and Lead Bot"
+        }
+      }
+    },
+    {
+      "id": "live-dev-schedule",
+      "name": "Poll Every 2 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 2
+            }
+          ]
+        }
+      },
+      "position": [
+        100,
+        300
+      ]
+    },
+    {
+      "id": "live-dev-manual",
+      "name": "Run Live Polling",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "parameters": {},
+      "position": [
+        100,
+        500
+      ]
+    },
+    {
+      "id": "live-dev-read-media",
+      "name": "Read Recent Instagram Media",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $(\"Live Polling Configuration\").first().json.config.graphBaseUrl + \"/\" + $(\"Live Polling Configuration\").first().json.config.instagramAccountId + \"/media\" }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_INSTAGRAM_GRAPH_API_TOKEN"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "fields",
+              "value": "id,permalink,timestamp,comments_count"
+            },
+            {
+              "name": "limit",
+              "value": "={{ $(\"Live Polling Configuration\").first().json.config.polling.mediaLimit }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "position": [
+        620,
+        400
+      ]
+    },
+    {
+      "id": "live-dev-select-media",
+      "name": "Select Media to Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "const config = $('Live Polling Configuration').first().json.config;\nconst response = $input.first().json;\nif (!Array.isArray(response.data)) {\n  throw new Error('Meta did not return a media list. Check the read request and token permissions.');\n}\nreturn response.data\n  .filter(media => media.id && media.comments_count !== 0)\n  .filter(media => !config.targetMediaId || String(media.id) === String(config.targetMediaId))\n  .slice(0, config.polling.mediaLimit)\n  .map(media => ({ json: {\n    mediaId: String(media.id),\n    mediaUrl: String(media.permalink || ''),\n    moreMediaAvailable: Boolean(response.paging?.next),\n  }, pairedItem: { item: 0 } }));\n"
+      },
+      "position": [
+        880,
+        400
+      ]
+    },
+    {
+      "id": "live-dev-read-comments",
+      "name": "Read Comments for Media",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $(\"Live Polling Configuration\").first().json.config.graphBaseUrl + \"/\" + $json.mediaId + \"/comments\" }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_INSTAGRAM_GRAPH_API_TOKEN"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "fields",
+              "value": "id,text,timestamp,username,from"
+            },
+            {
+              "name": "limit",
+              "value": "={{ $(\"Live Polling Configuration\").first().json.config.polling.commentsPerMedia }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "position": [
+        1140,
+        400
+      ]
+    },
+    {
+      "id": "live-polling-config",
+      "name": "Live Polling Configuration",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        360,
+        400
+      ],
+      "parameters": {
+        "jsCode": "const CONFIG = {\n  \"instagramAccountId\": \"17841480124544403\",\n  \"instagramUsername\": \"developmentserhat\",\n  \"graphBaseUrl\": \"https://graph.facebook.com/v26.0\",\n  \"spreadsheetId\": \"1jF0FozA9pDptoO74bv77uBEJraifoZxerbohMrwEOUA\",\n  \"sheetName\": \"Leads\",\n  \"targetMediaId\": \"\",\n  \"startupName\": \"Codewaft\",\n  \"startupLink\": \"https://codewaft.com/?ref=ig_lead\",\n  \"triggerKeywords\": [\n    \"INFO\",\n    \"PRICE\",\n    \"LINK\",\n    \"START\",\n    \"DEMO\",\n    \"GUIDE\",\n    \"DETAILS\",\n    \"FİYAT\",\n    \"BİLGİ\",\n    \"DETAY\"\n  ],\n  \"telegramChatId\": \"1519369571\",\n  \"polling\": {\n    \"intervalMinutes\": 2,\n    \"lookbackMinutes\": 1440,\n    \"mediaLimit\": 5,\n    \"commentsPerMedia\": 50\n  }\n};\nreturn [{ json: { ...($input.first()?.json || {}), config: CONFIG } }];"
+      }
+    },
+    {
+      "id": "live-polling-normalize",
+      "name": "Normalize Polled Comments",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        400
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const config = $('Live Polling Configuration').first().json.config;\nconst media = $('Select Media to Check').item.json;\nif (!Array.isArray($json.data)) throw new Error('Meta did not return a comments list');\nconst lookbackMs = (config.polling?.lookbackMinutes || 1440) * 60000;\nconst cutoff = Date.now() - lookbackMs;\nconst changes = [];\nfor (const comment of $json.data) {\n  const createdAt = Date.parse(comment.timestamp);\n  if (!Number.isFinite(createdAt) || createdAt < cutoff || createdAt > Date.now() + 300000) continue;\n  changes.push({\n    field: 'comments',\n    value: {\n      id: String(comment.id || ''),\n      text: String(comment.text || ''),\n      timestamp: comment.timestamp,\n      from: {\n        id: String(comment.from?.id || ''),\n        username: String(comment.from?.username || comment.username || 'anonymous')\n      },\n      media: { id: media.mediaId },\n    }\n  });\n}\nreturn {\n  json: {\n    body: { object: 'instagram', entry: [{ id: config.instagramAccountId, changes }] },\n    polling: {\n      mediaId: media.mediaId,\n      mediaUrl: media.mediaUrl,\n      commentsReturned: $json.data.length,\n      moreCommentsAvailable: Boolean($json.paging?.next)\n    },\n  }\n};\n"
+      }
+    },
+    {
+      "id": "live-dedupe-comment",
+      "name": "Skip Previously Attempted Comments",
+      "type": "n8n-nodes-base.removeDuplicates",
+      "typeVersion": 2,
+      "position": [
+        2180,
+        400
+      ],
+      "parameters": {
+        "operation": "removeItemsSeenInPreviousExecutions",
+        "logic": "removeItemsWithAlreadySeenKeyValues",
+        "dedupeValue": "={{ $json.commentId }}",
+        "options": {
+          "scope": "node",
+          "historySize": 10000
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Poll Every 2 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Live Polling Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Live Polling": {
+      "main": [
+        [
+          {
+            "node": "Live Polling Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Live Polling Configuration": {
+      "main": [
+        [
+          {
+            "node": "Read Recent Instagram Media",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Recent Instagram Media": {
+      "main": [
+        [
+          {
+            "node": "Select Media to Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select Media to Check": {
+      "main": [
+        [
+          {
+            "node": "Read Comments for Media",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Comments for Media": {
+      "main": [
+        [
+          {
+            "node": "Normalize Polled Comments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Polled Comments": {
+      "main": [
+        [
+          {
+            "node": "Filter & Parse Comment Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter & Parse Comment Event": {
+      "main": [
+        [
+          {
+            "node": "Is Keyword Matched?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Keyword Matched?": {
+      "main": [
+        [
+          {
+            "node": "Skip Previously Attempted Comments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip Previously Attempted Comments": {
+      "main": [
+        [
+          {
+            "node": "Send Personalized Instagram DM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Personalized Instagram DM": {
+      "main": [
+        [
+          {
+            "node": "Post Public Comment Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post Public Comment Reply": {
+      "main": [
+        [
+          {
+            "node": "Prepare Google Sheets Lead Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Google Sheets Lead Row": {
+      "main": [
+        [
+          {
+            "node": "Append Lead to Google Sheet",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send Telegram Lead Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Istanbul",
+    "executionTimeout": 90,
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all",
+    "saveManualExecutions": true
+  }
+}

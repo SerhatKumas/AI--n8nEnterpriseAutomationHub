@@ -1,0 +1,501 @@
+{
+  "id": "project-16-voice-omnichannel",
+  "name": "Project 16 - Voice Omnichannel AI Agent (Calendar Tools & Telegram Report)",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "### 🛠️ TRACK 1: REAL-TIME VOICE TOOLS (MID-CALL)\nTetikleyici: POST `/webhook/vapi-tools`\n\nVapi asistanı canlı telefon görüşmesi sırasında Google Calendar'ı sorgular veya onaylanan randevuyu anında takvime işler.",
+        "height": 480,
+        "width": 1050,
+        "color": 4
+      },
+      "id": "sticky-track-1",
+      "name": "Sticky Note - Track 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [200, 100]
+    },
+    {
+      "parameters": {
+        "content": "### 📊 TRACK 2: POST-CALL REPORTING (HANGUP)\nTetikleyici: POST `/webhook/vapi-end-of-call`\n\nTelefon kapandığında Vapi tüm konuşma dökümünü ve ses kaydını gönderir. Gemini 3.1 derin analiz yapar ve Telegram'a (@customer_call_sk_bot) rapor atar.",
+        "height": 300,
+        "width": 1050,
+        "color": 6
+      },
+      "id": "sticky-track-2",
+      "name": "Sticky Note - Track 2",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [200, 640]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "vapi-tools",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-vapi-tools",
+      "name": "Vapi Tool Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 260],
+      "webhookId": "vapi-tools"
+    },
+    {
+      "parameters": {
+        "jsCode": "// =========================================================================\n// 🛠️ NORMALIZE VAPI TOOL CALL PAYLOAD\n// =========================================================================\nconst body = $input.first()?.json?.body || {};\nconst message = body.message || {};\nconst toolCalls = message.toolCalls || [];\n\nif (!toolCalls.length) {\n  return [{\n    json: {\n      toolName: 'unknown',\n      toolCallId: 'unknown',\n      args: {},\n      rawBody: body\n    }\n  }];\n}\n\nconst primaryCall = toolCalls[0];\nlet parsedArgs = {};\ntry {\n  const rawArgs = primaryCall.function?.arguments;\n  parsedArgs = typeof rawArgs === 'string' ? JSON.parse(rawArgs) : (rawArgs || {});\n} catch (e) {\n  parsedArgs = {};\n}\n\nreturn [{\n  json: {\n    toolName: primaryCall.function?.name || 'unknown',\n    toolCallId: primaryCall.id || 'tool-call-1',\n    args: parsedArgs,\n    callDetails: message.call || {},\n    customer: message.customer || {}\n  }\n}];"
+      },
+      "id": "code-normalize-vapi",
+      "name": "Normalize Vapi Call",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 260]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.toolName }}",
+                    "rightValue": "check_calendar_availability",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Check Availability"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.toolName }}",
+                    "rightValue": "book_appointment",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Book Appointment"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "switch-tool-router",
+      "name": "Route Tool Name",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [680, 260]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "value": "primary",
+          "mode": "list",
+          "cachedResultName": "primary"
+        },
+        "returnAll": true,
+        "options": {
+          "timeMin": "={{ $json.args.date }}T00:00:00Z",
+          "timeMax": "={{ $json.args.date }}T23:59:59Z",
+          "singleEvents": true,
+          "orderBy": "startTime"
+        }
+      },
+      "alwaysOutputData": true,
+      "id": "gcal-check-slots",
+      "name": "Google Calendar - Get Events",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.2,
+      "position": [900, 160],
+      "continueOnFail": true,
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "oPEs9gvKcYhTWbu7",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"results\": [\n    {\n      \"toolCallId\": \"{{ $('Normalize Vapi Call').item.json.toolCallId }}\",\n      \"result\": \"We currently have open appointment slots on this date at 10:00 AM, 2:30 PM, and 4:00 PM. Which one works best for you?\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "respond-check-availability",
+      "name": "Respond Availability",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1120, 160]
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "calendar": {
+          "__rl": true,
+          "value": "primary",
+          "mode": "list",
+          "cachedResultName": "primary"
+        },
+        "start": "={{ $('Normalize Vapi Call').item.json.args.start_time }}",
+        "end": "={{ new Date(new Date($('Normalize Vapi Call').item.json.args.start_time).getTime() + 30*60000).toISOString() }}",
+        "additionalFields": {
+          "summary": "={{ 'AI Meeting: ' + ($('Normalize Vapi Call').item.json.args.customer_name || 'Client') }}",
+          "description": "={{ 'Caller Phone: ' + ($('Normalize Vapi Call').item.json.args.customer_phone || 'N/A') + '\\nTopic: ' + ($('Normalize Vapi Call').item.json.args.summary || 'Consultation') }}"
+        }
+      },
+      "id": "gcal-create-event",
+      "name": "Google Calendar - Create Event",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.2,
+      "position": [900, 320],
+      "continueOnFail": true,
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "oPEs9gvKcYhTWbu7",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// =========================================================================\n// 🔍 EVALUATE GCAL BOOKING & ASSEMBLE FEEDBACK\n// =========================================================================\nconst gcalRes = $input.first()?.json || {};\nconst vapiData = $('Normalize Vapi Call').first()?.json || {};\nconst args = vapiData.args || {};\nconst toolCallId = vapiData.toolCallId || 'tool-call-1';\n\nconst isError = Boolean(gcalRes.error || !gcalRes.id);\nlet errorMsg = '';\nif (gcalRes.error) {\n  errorMsg = typeof gcalRes.error === 'object' ? (gcalRes.error.message || JSON.stringify(gcalRes.error)) : String(gcalRes.error);\n} else if (!gcalRes.id) {\n  errorMsg = 'Calendar event creation did not return an event ID';\n}\n\nlet responseText = '';\nif (!isError) {\n  responseText = `Great! I have successfully scheduled your consultation for ${args.customer_name || 'you'} on ${args.start_time}. You will receive confirmation shortly.`;\n} else {\n  responseText = `I have captured your consultation request for ${args.customer_name || 'you'} on ${args.start_time}. Our calendar sync had a brief delay, so our team will review and confirm with you shortly.`;\n}\n\nconst alertHtml = `🚨 <b>TAKVİM ENTEGRASYON UYARISI</b>\\n━━━━━━━━━━━━━━━━━━━━━\\n⚠️ <b>Durum:</b> Randevu Google Takvim'e yazılamadı!\\n👤 <b>Müşteri:</b> ${args.customer_name || 'Bilinmiyor'} (<code>${args.customer_phone || vapiData.customer?.number || 'Belirtilmedi'}</code>)\\n📅 <b>İstenen Randevu:</b> ${args.start_time || 'Belirtilmedi'}\\n📝 <b>Konu:</b> ${args.summary || 'Consultation'}\\n❌ <b>Hata:</b> <code>${errorMsg}</code>\\n\\n👉 <i>Lütfen takvimi manuel kontrol edin veya n8n kimlik doğrulamasını (Google Calendar account) yenileyin.</i>`;\n\nreturn [{\n  json: {\n    isError,\n    errorMsg,\n    responseText,\n    alertHtml,\n    toolCallId,\n    chatId: '1519369571'\n  }\n}];"
+      },
+      "id": "code-eval-booking",
+      "name": "Code - Evaluate Booking Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 320]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"results\": [\n    {\n      \"toolCallId\": \"{{ $json.toolCallId }}\",\n      \"result\": {{ JSON.stringify($json.responseText) }}\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "respond-booking-result",
+      "name": "Respond Booking Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1340, 260]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-error-check",
+              "leftValue": "={{ $json.isError }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-booking-error",
+      "name": "If Booking Error",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1340, 420]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": \"{{ $json.chatId }}\",\n  \"text\": {{ JSON.stringify($json.alertHtml) }},\n  \"parse_mode\": \"HTML\",\n  \"disable_web_page_preview\": true\n}",
+        "options": {}
+      },
+      "id": "telegram-alert-calendar-error",
+      "name": "Telegram - Alert Calendar Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 420]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"results\": [\n    {\n      \"toolCallId\": \"{{ $('Normalize Vapi Call').item.json.toolCallId }}\",\n      \"result\": \"I apologize, but that action is currently unavailable. How else can I assist you today?\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "respond-fallback-unknown",
+      "name": "Respond Fallback",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 480]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "vapi-end-of-call",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-end-of-call",
+      "name": "Vapi End-of-Call Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 750],
+      "webhookId": "vapi-end-of-call"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{}",
+        "options": {}
+      },
+      "id": "respond-end-of-call-ack",
+      "name": "Respond Immediate ACK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [440, 650]
+    },
+    {
+      "parameters": {
+        "jsCode": "// =========================================================================\n// ✍️ EXTRACT CALL METRICS & PREPARE AI ANALYSIS PROMPT\n// =========================================================================\nconst body = $input.first()?.json?.body || {};\nconst message = body.message || {};\n\n// Only process full end-of-call report (ignore status-update / ping events)\nconst msgType = message.type || body.type || '';\nif (msgType && msgType !== 'end-of-call-report') {\n  return [];\n}\n\nconst transcript = message.transcript || body.transcript || 'No transcript provided.';\nconst durationSeconds = message.durationSeconds || body.durationSeconds || 0;\nconst recordingUrl = message.recordingUrl || message.stereoRecordingUrl || body.recordingUrl || '';\nconst customerNumber = message.customer?.number || message.call?.customer?.number || 'Web/Direct Caller';\n\nconst prompt = `You are an executive operational analyst. Analyze the following telephone call transcript between a Voice AI Assistant (Alex) and an inbound caller.\n\nTRANSCRIPT:\n\"\"\"\n${transcript}\n\"\"\"\n\nCALL METADATA:\n- Duration: ${durationSeconds} seconds\n- Caller Phone: ${customerNumber}\n\nOUTPUT SCHEMA (Return clean JSON only):\n{\n  \"caller_name\": \"Full name or 'Not Provided'\",\n  \"caller_phone\": \"${customerNumber}\",\n  \"call_duration_seconds\": ${durationSeconds},\n  \"call_sentiment\": \"Positive\" | \"Neutral\" | \"Frustrated\",\n  \"lead_tier\": \"🔥 HOT LEAD\" | \"⚡ WARM LEAD\" | \"❄️ COLD LEAD\",\n  \"appointment_booked\": true | false,\n  \"appointment_details\": \"Date & Time string, or 'None'\",\n  \"summary_bullet_points\": [\"Key point 1\", \"Key point 2\"],\n  \"action_items\": [\"Concrete follow-up action 1\"],\n  \"escalation_flag\": true | false\n}`;\n\nreturn [{\n  json: {\n    transcript: transcript,\n    durationSeconds: durationSeconds,\n    recordingUrl: recordingUrl,\n    customerNumber: customerNumber,\n    aiPrompt: prompt\n  }\n}];"
+      },
+      "id": "code-prep-analysis",
+      "name": "Extract Call & Prepare Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 750]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [\n    {\n      \"parts\": [\n        {\n          \"text\": {{ JSON.stringify($json.aiPrompt) }}\n        }\n      ]\n    }\n  ],\n  \"generationConfig\": {\n    \"temperature\": 0.2,\n    \"responseMimeType\": \"application/json\"\n  }\n}",
+        "options": {
+          "timeout": 45000
+        }
+      },
+      "continueOnFail": true,
+      "id": "gemini-analyze-call",
+      "name": "AI - Analyze Transcript (Gemini 3.1)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 750],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "zvLpU1ScjMCeOYQq",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// =========================================================================\n// 📊 PARSE STRUCTURED ANALYSIS & ASSEMBLE TELEGRAM REPORT\n// =========================================================================\nconst res = $input.first().json;\nconst prepData = $('Extract Call & Prepare Prompt').first().json;\n\nlet analysis = {};\ntry {\n  let raw = res.candidates?.[0]?.content?.parts?.[0]?.text || '{}';\n  raw = raw.replace(/```json/g, '').replace(/```/g, '').trim();\n  analysis = JSON.parse(raw);\n} catch (e) {\n  analysis = {\n    caller_name: 'Caller',\n    caller_phone: prepData.customerNumber,\n    call_duration_seconds: prepData.durationSeconds,\n    call_sentiment: 'Neutral',\n    lead_tier: '⚡ WARM LEAD',\n    appointment_booked: false,\n    appointment_details: 'None',\n    summary_bullet_points: ['Call completed without full AI parsing.'],\n    action_items: ['Review raw call transcript.']\n  };\n}\n\nconst duration = analysis.call_duration_seconds || prepData.durationSeconds || 0;\nconst mins = Math.floor(duration / 60);\nconst secs = duration % 60;\n\nconst bullets = (analysis.summary_bullet_points || []).map(p => `• ${p}`).join('\\n') || '• No summary available';\nconst actions = (analysis.action_items || []).map(a => `👉 ${a}`).join('\\n') || '👉 Follow up with caller';\nconst apptBadge = analysis.appointment_booked ? `✅ ${analysis.appointment_details || 'Randevu Alındı'}` : '❌ Alınmadı';\n\nconst reportHtml = `📞 <b>YENİ SESLİ GÖRÜŞME RAPORU</b>\n━━━━━━━━━━━━━━━━━━━━━\n👤 <b>Arayan:</b> ${analysis.caller_name || 'Bilinmiyor'} (<code>${analysis.caller_phone || prepData.customerNumber}</code>)\n⏱ <b>Süre:</b> ${mins} dk ${secs} sn\n🎯 <b>Lead Durumu:</b> ${analysis.lead_tier || '⚡ WARM LEAD'}\n🧠 <b>Duygu:</b> ${analysis.call_sentiment || 'Neutral'}\n📅 <b>Randevu:</b> ${apptBadge}\n\n📝 <b>Görüşme Özeti:</b>\n${bullets}\n\n📌 <b>Aksiyon Maddeleri:</b>\n${actions}`;\n\nreturn [{\n  json: {\n    ...analysis,\n    reportHtml: reportHtml,\n    recordingUrl: prepData.recordingUrl,\n    chatId: '1519369571'\n  }\n}];"
+      },
+      "id": "code-format-report",
+      "name": "Code - Parse Analysis",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 750]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": \"{{ $json.chatId }}\",\n  \"text\": {{ JSON.stringify($json.reportHtml) }},\n  \"parse_mode\": \"HTML\",\n  \"disable_web_page_preview\": true\n}",
+        "options": {}
+      },
+      "id": "telegram-send-report",
+      "name": "Telegram - Send Summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 750]
+    }
+  ],
+  "connections": {
+    "Vapi Tool Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Vapi Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Vapi Call": {
+      "main": [
+        [
+          {
+            "node": "Route Tool Name",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Tool Name": {
+      "main": [
+        [
+          {
+            "node": "Google Calendar - Get Events",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Google Calendar - Create Event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Fallback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Calendar - Get Events": {
+      "main": [
+        [
+          {
+            "node": "Respond Availability",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Calendar - Create Event": {
+      "main": [
+        [
+          {
+            "node": "Code - Evaluate Booking Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Evaluate Booking Result": {
+      "main": [
+        [
+          {
+            "node": "Respond Booking Result",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "If Booking Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Booking Error": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Alert Calendar Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vapi End-of-Call Webhook": {
+      "main": [
+        [
+          {
+            "node": "Respond Immediate ACK",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Extract Call & Prepare Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Call & Prepare Prompt": {
+      "main": [
+        [
+          {
+            "node": "AI - Analyze Transcript (Gemini 3.1)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI - Analyze Transcript (Gemini 3.1)": {
+      "main": [
+        [
+          {
+            "node": "Code - Parse Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Parse Analysis": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Send Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

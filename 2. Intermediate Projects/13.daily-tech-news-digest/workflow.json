@@ -1,0 +1,266 @@
+{
+  "name": "Project 13 : Daily Tech & News Digest (24h Rolling Window)",
+  "nodes": [
+    {
+      "id": "08aa13f5-1dc9-4764-9828-96fd08987056",
+      "name": "Schedule: Daily 08:00 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        200,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "3333d995-d1c4-4c4e-99cc-7fcf0b606219",
+      "name": "Telegram Trigger (Commands)",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        200,
+        520
+      ],
+      "parameters": {
+        "updates": [
+          "message"
+        ]
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "dailyTechNewsBot",
+          "name": "Daily Tech News Bot"
+        }
+      },
+      "webhookId": "p13-tech-news-digest-telegram-trigger"
+    },
+    {
+      "id": "5b1e43af-c6de-47b8-aa1e-c1a7583660e4",
+      "name": "Manual Webhook (Digest On-Demand)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        200,
+        720
+      ],
+      "parameters": {
+        "path": "p13-digest-now",
+        "httpMethod": "GET",
+        "responseMode": "onReceived",
+        "responseData": "allEntries"
+      },
+      "webhookId": "p13-digest-now"
+    },
+    {
+      "id": "3a690685-3e08-4abe-b009-028e5937dc65",
+      "name": "Route & Compute 24h Window",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        420
+      ],
+      "parameters": {
+        "jsCode": "const input = $input.first()?.json || {};\nconst DEFAULT_CHAT_ID = \"1519369571\"; // Serhat Kumas Telegram Chat ID\nconst botToken = \"YOUR_TELEGRAM_BOT_TOKEN\";\n\nconst sendQuickTg = async (chatId, html) => {\n  try {\n    await this.helpers.httpRequest({\n      method: \"POST\",\n      url: \"https://api.telegram.org/bot\" + botToken + \"/sendMessage\",\n      headers: { \"Content-Type\": \"application/json\" },\n      body: { chat_id: chatId, text: html, parse_mode: \"HTML\" },\n      json: true\n    });\n  } catch(e) {}\n};\n\n// 1. Detect source\nlet triggerSource = \"manual\";\nlet chatId = DEFAULT_CHAT_ID;\nconst msg = input.message || input.msg;\n\nif (msg && msg.text) {\n  triggerSource = \"telegram\";\n  chatId = String(msg.chat?.id || msg.from?.id || DEFAULT_CHAT_ID);\n  const rawText = String(msg.text).trim();\n  const text = rawText.toLowerCase();\n\n  // Handle /status\n  if (text.startsWith(\"/status\") || text.includes(\"durum\") || text === \"status\") {\n    let lastRun = \"Henüz bülten gönderilmedi (İlk çalışma bekleniyor)\";\n    try {\n      const fs = require(\"fs\");\n      const p = \"/home/node/.n8n-files/studio-images/p13_last_digest.json\";\n      if (fs.existsSync(p)) {\n        const d = JSON.parse(fs.readFileSync(p, \"utf8\"));\n        lastRun = `📅 <b>Son Bülten:</b> ${d.timestamp || \"Bilinmiyor\"}\\n📊 <b>Özetlenen Haber Sayısı:</b> ${d.articleCount || 0} adet`;\n      }\n    } catch(e) {}\n\n    await sendQuickTg(chatId, `📊 <b>Daily Tech & News Digest Durumu</b>\\n━━━━━━━━━━━━━━━━━━━━\\n✅ <b>Sistem:</b> Aktif ve Çalışıyor\\n⏰ <b>Otomatik Gönderim:</b> Her gün 08:00 (Europe/Istanbul)\\n📡 <b>RSS Kaynakları:</b> 11 Global & Yerel Teknoloji Portalı\\n${lastRun}\\n\\n👉 <i>Hemen güncel özeti almak için /digest yazabilirsiniz.</i>`);\n    return [];\n  }\n\n  // Handle /help or /start\n  if (text.startsWith(\"/help\") || text.startsWith(\"/start\") || text === \"yardım\") {\n    await sendQuickTg(chatId, `👋 <b>Daily Tech & News Digest Asistanına Hoş Geldiniz!</b>\\n━━━━━━━━━━━━━━━━━━━━\\nBu bot her sabah <b>08:00</b>'de son 24 saatin tüm önemli teknoloji, yapay zeka ve yazılım haberlerini Gemini ile özetleyip size iletir.\\n\\n<b>Komutlar:</b>\\n• <b>/digest</b>: Son 24 saatin özet bültenini hemen üretir ve gönderir.\\n• <b>/status</b>: Sistem ve kaynak durumunu görüntüler.\\n• <b>/help</b>: Bu yardım mesajını gösterir.\\n\\nKeyifli okumalar! ☕📰`);\n    return [];\n  }\n} else if (input.rule || input.cron) {\n  triggerSource = \"schedule\";\n}\n\n// 2. Compute 24-Hour Rolling Window (Yesterday 08:00 AM -> Today 08:00 AM)\nconst now = new Date();\nlet windowEnd = now.toISOString();\nlet windowStart = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();\n\n// Check if we have persistent lastRun timestamp to ensure zero-gap coverage\ntry {\n  const fs = require(\"fs\");\n  const p = \"/home/node/.n8n-files/studio-images/p13_last_digest.json\";\n  if (fs.existsSync(p)) {\n    const d = JSON.parse(fs.readFileSync(p, \"utf8\"));\n    if (d.timestamp) {\n      const prevDate = new Date(d.timestamp);\n      // If previous run was within the last 30 hours, use exact previous run time as window start\n      if (now.getTime() - prevDate.getTime() < 30 * 60 * 60 * 1000) {\n        windowStart = prevDate.toISOString();\n      }\n    }\n  }\n} catch(e) {}\n\nreturn [{\n  json: {\n    triggerSource,\n    chatId,\n    windowStart,\n    windowEnd,\n    triggeredAt: now.toISOString()\n  }\n}];"
+      }
+    },
+    {
+      "id": "a407cf2a-02ed-4a5d-a8f1-1dce20ba0702",
+      "name": "Fetch 11 Tech RSS Feeds (Parallel)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        420
+      ],
+      "parameters": {
+        "jsCode": "const meta = $input.first()?.json || {};\nconst windowStartMs = new Date(meta.windowStart || (Date.now() - 24 * 60 * 60 * 1000)).getTime();\nconst windowEndMs = new Date(meta.windowEnd || Date.now()).getTime();\n\nconst FEEDS = [\n  { name: \"Hacker News\", url: \"https://hnrss.org/frontpage\", category: \"Dev & Community\" },\n  { name: \"TechCrunch\", url: \"https://techcrunch.com/feed/\", category: \"Startups & VC\" },\n  { name: \"The Verge\", url: \"https://www.theverge.com/rss/index.xml\", category: \"Tech & Media\" },\n  { name: \"Ars Technica\", url: \"https://feeds.arstechnica.com/arstechnica/index\", category: \"Deep Tech & Science\" },\n  { name: \"Wired\", url: \"https://www.wired.com/feed/rss\", category: \"Culture & Tech\" },\n  { name: \"Engadget\", url: \"https://www.engadget.com/rss.xml\", category: \"Gadgets & Hardware\" },\n  { name: \"GitHub Blog\", url: \"https://github.blog/feed/\", category: \"Software Engineering\" },\n  { name: \"Google AI Blog\", url: \"https://blog.google/technology/ai/rss/\", category: \"Artificial Intelligence\" },\n  { name: \"MIT Tech Review AI\", url: \"https://www.technologyreview.com/topic/artificial-intelligence/feed/\", category: \"Artificial Intelligence\" },\n  { name: \"Webrazzi\", url: \"https://webrazzi.com/feed/\", category: \"Turkish Tech & Startups\" },\n  { name: \"Changelog\", url: \"https://changelog.com/feed\", category: \"Software & Open Source\" }\n];\n\n// Helper to decode basic XML / HTML entities\nconst cleanText = (str) => {\n  if (!str) return \"\";\n  return String(str)\n    .replace(/<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>/gi, \"$1\")\n    .replace(/<[^>]+>/g, \" \")\n    .replace(/&amp;/g, \"&\")\n    .replace(/&lt;/g, \"<\")\n    .replace(/&gt;/g, \">\")\n    .replace(/&quot;/g, '\"')\n    .replace(/&#39;/g, \"'\")\n    .replace(/\\s+/g, \" \")\n    .trim();\n};\n\nconst cleanUrl = (raw) => {\n  if (!raw) return \"\";\n  try {\n    const u = new URL(raw);\n    // Strip tracking parameters\n    [\"utm_source\", \"utm_medium\", \"utm_campaign\", \"utm_term\", \"utm_content\", \"ref\", \"fbclid\"].forEach(p => u.searchParams.delete(p));\n    return u.toString();\n  } catch(e) {\n    return raw.trim();\n  }\n};\n\n// Fetch each feed with timeout\nconst fetchFeed = async (feed) => {\n  try {\n    const xml = await this.helpers.httpRequest({\n      method: \"GET\",\n      url: feed.url,\n      headers: {\n        \"User-Agent\": \"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36\",\n        \"Accept\": \"application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8\"\n      },\n      timeout: 10000,\n      json: false\n    });\n    return { feed, xml: String(xml) };\n  } catch (err) {\n    console.log(`Feed fetch failed (${feed.name}): ` + err.message);\n    return { feed, xml: \"\" };\n  }\n};\n\n// Execute all fetches in parallel\nconst results = await Promise.all(FEEDS.map(fetchFeed));\n\nconst articles = [];\nconst seenUrls = new Set();\nconst seenTitles = new Set();\n\nfor (const { feed, xml } of results) {\n  if (!xml) continue;\n\n  // Match both RSS <item> and Atom <entry>\n  const itemMatches = [...xml.matchAll(/<(?:item|entry)[^>]*>([\\s\\S]*?)<\\/(?:item|entry)>/gi)];\n\n  for (const match of itemMatches) {\n    const block = match[1];\n\n    // Title\n    const titleMatch = block.match(/<title[^>]*>([\\s\\S]*?)<\\/title>/i);\n    const rawTitle = cleanText(titleMatch ? titleMatch[1] : \"\");\n    if (!rawTitle || rawTitle.length < 5) continue;\n\n    // Link\n    let rawLink = \"\";\n    const linkMatch = block.match(/<link[^>]*href=[\"']([^\"']+)[\"']/i) || block.match(/<link[^>]*>([\\s\\S]*?)<\\/link>/i);\n    if (linkMatch) rawLink = cleanText(linkMatch[1]);\n    const finalUrl = cleanUrl(rawLink);\n    if (!finalUrl || seenUrls.has(finalUrl)) continue;\n\n    // Normalized title deduplication\n    const normTitle = rawTitle.toLowerCase().replace(/[^a-z0-9]/g, \"\").slice(0, 40);\n    if (seenTitles.has(normTitle)) continue;\n\n    // Date\n    const dateMatch = block.match(/<(?:pubDate|published|updated|dc:date)[^>]*>([\\s\\S]*?)<\\/(?:pubDate|published|updated|dc:date)>/i);\n    let pubDate = null;\n    let pubTime = 0;\n    if (dateMatch) {\n      pubDate = cleanText(dateMatch[1]);\n      pubTime = new Date(pubDate).getTime();\n    }\n\n    // Snippet / Description\n    const descMatch = block.match(/<(?:description|summary|content)[^>]*>([\\s\\S]*?)<\\/(?:description|summary|content)>/i);\n    const snippet = cleanText(descMatch ? descMatch[1] : \"\").slice(0, 300);\n\n    // 24-hour window filter:\n    // If date is valid, enforce windowStartMs <= pubTime <= windowEndMs + 2 hours safety margin\n    if (!isNaN(pubTime) && pubTime > 0) {\n      if (pubTime < windowStartMs) continue; // older than yesterday 08:00 AM\n    }\n\n    seenUrls.add(finalUrl);\n    seenTitles.add(normTitle);\n\n    articles.push({\n      source: feed.name,\n      category: feed.category,\n      title: rawTitle,\n      link: finalUrl,\n      pubDate: pubDate || new Date().toISOString(),\n      snippet\n    });\n  }\n}\n\n// Sort by recency\narticles.sort((a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime());\n\nreturn [{\n  json: {\n    meta,\n    chatId: meta.chatId || DEFAULT_CHAT_ID,\n    totalFeeds: FEEDS.length,\n    articlesCount: articles.length,\n    articles: articles.slice(0, 45) // Keep top 45 richest stories\n  }\n}];"
+      }
+    },
+    {
+      "id": "a079fb2b-9994-4205-86a8-8e7b8ca2d844",
+      "name": "Prepare Gemini Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        420
+      ],
+      "parameters": {
+        "jsCode": "const input = $input.first()?.json || {};\nconst articles = input.articles || [];\nconst chatId = input.chatId || \"1519369571\";\nconst windowStart = input.meta?.windowStart;\nconst windowEnd = input.meta?.windowEnd;\n\nif (!articles.length) {\n  return [{\n    json: {\n      hasArticles: false,\n      chatId,\n      prompt: \"\"\n    }\n  }];\n}\n\nconst articlesSummary = articles.map((a, i) => {\n  return `${i + 1}. [${a.source}] ${a.title}\\nLink: ${a.link}\\nSnippet: ${a.snippet}`;\n}).join(\"\\n\\n\");\n\nconst systemPrompt = `Sen Türkiye'nin en iyi teknoloji editörü ve kıdemli yazılım mimarısın.\nGörevin: Dün sabah 08:00'den bugüne kadar son 24 saat içinde yayımlanan teknoloji, yapay zeka ve yazılım haberlerini analiz etmek; en kritik ve çarpıcı gelişmeleri seçerek Telegram için son derece akıcı, profesyonel ve Türkçe bir \"GÜNLÜK TEKNOLOJİ BÜLTENİ\" hazırlamaktır.\n\nKURALLAR:\n1. Haberleri şu 5 mantıksal kategoriye ayır:\n   🤖 <b>Yapay Zeka & Büyük Modeller (AI & LLMs)</b>\n   💻 <b>Geliştirici Dünyası & Açık Kaynak (Dev & Open Source)</b>\n   🚀 <b>Büyük Teknoloji & Startuplar (Big Tech & Startups)</b>\n   🔒 <b>Siber Güvenlik & Gizlilik (Security & Privacy)</b>\n   📱 <b>Donanım & Tüketici Teknolojisi (Hardware & Gadgets)</b>\n   (Eğer bir kategoride haber yoksa o başlığı atla).\n\n2. Her haber maddesi için TAM OLARAK şu formatı kullan:\n   • <b>[Türkçe Çarpıcı Haber Başlığı]</b>: 1-2 cümleyle olayın ne olduğunu ve sektör/geliştiriciler için 'Neden Önemli' olduğunu açıkla.\n     👉 <a href=\"HABER_LINKI\">Haberi Oku ([KAYNAK])</a>\n\n3. Mümkün olduğunca ÇOK ve DOLU haber ekle (önemsiz tekrarları ele, ancak önemli hiçbir gelişmeyi dışarıda bırakma).\n4. SADECE Telegram HTML formatı kullan (<b>, <i>, <code>, <a>). Asla markdown (**, ##, [text](url)) KULLANMA!\n5. Bültenin en başına şu başlığı ekle:\n   🗞️ <b>GÜNLÜK TEKNOLOJİ & YAZILIM BÜLTENİ</b>\n   📅 <i>Son 24 Saatlik Özet (08:00 — 08:00)</i>\n   ━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n6. Bültenin en sonuna tek satırlık ilham verici bir kapanış ekle.`;\n\nconst userPrompt = `Aşağıda son 24 saatte toplanan ${articles.length} adet haber bulunmaktadır. Bu haberleri inceleyerek bülteni oluştur:\\n\\n${articlesSummary}`;\n\nreturn [{\n  json: {\n    hasArticles: true,\n    chatId,\n    articlesCount: articles.length,\n    geminiBody: {\n      contents: [\n        {\n          role: \"user\",\n          parts: [\n            { text: systemPrompt + \"\\n\\n\" + userPrompt }\n          ]\n        }\n      ],\n      generationConfig: {\n        temperature: 0.3,\n        maxOutputTokens: 3000\n      }\n    }\n  }\n}];"
+      }
+    },
+    {
+      "id": "e253ea4e-e18c-4b2e-85fc-d663b8ff5f8b",
+      "name": "Gemini 3.1: Synthesize Digest",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1400,
+        420
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.geminiBody) }}",
+        "options": {
+          "timeout": 90000
+        }
+      },
+      "credentials": {
+        "googlePalmApi": {
+          "id": "zvLpU1ScjMCeOYQq",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "id": "80e65a3e-3aa1-4ec8-8eb7-4d411505d981",
+      "name": "Smart Telegram Chunker",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1700,
+        420
+      ],
+      "parameters": {
+        "jsCode": "const res = $input.first()?.json || {};\nconst promptNode = $(\"Prepare Gemini Prompt\").first()?.json || {};\nconst chatId = promptNode.chatId || \"1519369571\";\nconst articlesCount = promptNode.articlesCount || 0;\n\nlet text = res?.candidates?.[0]?.content?.parts?.[0]?.text || \"\";\n\nif (!text || text.trim().length === 0) {\n  text = `🗞️ <b>GÜNLÜK TEKNOLOJİ BÜLTENİ</b>\\n━━━━━━━━━━━━━━━━━━━━\\nSon 24 saat içinde filtrelere uygun yeni bir teknoloji haberi bulunamadı.\\n\\nYarın sabah 08:00'de görüşmek üzere! ☕`;\n}\n\n// Record last digest run timestamp to disk\ntry {\n  const fs = require(\"fs\");\n  const p = \"/home/node/.n8n-files/studio-images/p13_last_digest.json\";\n  fs.writeFileSync(p, JSON.stringify({\n    timestamp: new Date().toISOString(),\n    articleCount: articlesCount,\n    textLength: text.length\n  }, null, 2));\n} catch(e) {}\n\n// Telegram message limit is 4096 chars.\n// Split cleanly by categories or sections if > 3800 chars\nconst MAX_CHUNK = 3800;\n\nif (text.length <= MAX_CHUNK) {\n  return [{\n    json: {\n      chatId,\n      text,\n      chunkIndex: 1,\n      totalChunks: 1\n    }\n  }];\n}\n\n// Split into multiple parts\nconst lines = text.split(\"\\n\");\nconst chunks = [];\nlet currentChunk = \"\";\n\nfor (const line of lines) {\n  if ((currentChunk + \"\\n\" + line).length > MAX_CHUNK && currentChunk.length > 500) {\n    chunks.push(currentChunk.trim());\n    currentChunk = line;\n  } else {\n    currentChunk += (currentChunk ? \"\\n\" : \"\") + line;\n  }\n}\nif (currentChunk.trim()) {\n  chunks.push(currentChunk.trim());\n}\n\nreturn chunks.map((chunk, idx) => ({\n  json: {\n    chatId,\n    text: (chunks.length > 1 ? `[Bölüm ${idx + 1}/${chunks.length}]\\n\\n` : \"\") + chunk,\n    chunkIndex: idx + 1,\n    totalChunks: chunks.length\n  }\n}));"
+      }
+    },
+    {
+      "id": "fd064ad6-3f2f-4778-bcdf-3c53dc8aea00",
+      "name": "Send Digest to Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2000,
+        420
+      ],
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "disable_web_page_preview": true
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "dailyTechNewsBot",
+          "name": "Daily Tech News Bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule: Daily 08:00 AM": {
+      "main": [
+        [
+          {
+            "node": "Route & Compute 24h Window",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Trigger (Commands)": {
+      "main": [
+        [
+          {
+            "node": "Route & Compute 24h Window",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Webhook (Digest On-Demand)": {
+      "main": [
+        [
+          {
+            "node": "Route & Compute 24h Window",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route & Compute 24h Window": {
+      "main": [
+        [
+          {
+            "node": "Fetch 11 Tech RSS Feeds (Parallel)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch 11 Tech RSS Feeds (Parallel)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Gemini Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Gemini Prompt": {
+      "main": [
+        [
+          {
+            "node": "Gemini 3.1: Synthesize Digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini 3.1: Synthesize Digest": {
+      "main": [
+        [
+          {
+            "node": "Smart Telegram Chunker",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Smart Telegram Chunker": {
+      "main": [
+        [
+          {
+            "node": "Send Digest to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Istanbul",
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  }
+}

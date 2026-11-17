@@ -1,0 +1,14 @@
+{
+  "headers": {
+    "host": "n8n.codewaft.com",
+    "user-agent": "facebookexternalua",
+    "content-type": "application/json"
+  },
+  "params": {},
+  "query": {
+    "hub.mode": "subscribe",
+    "hub.challenge": "1158201444",
+    "hub.verify_token": "my_secure_whatsapp_token_123"
+  },
+  "body": {}
+}

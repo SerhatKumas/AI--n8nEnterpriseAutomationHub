@@ -1,0 +1,374 @@
+{
+  "id": "ai-personal-job-hunter-00015",
+  "name": "Project 15 : AI Personal Job Hunter & Career Matchmaker",
+  "nodes": [
+    {
+      "id": "p15-telegram-trigger-node-001",
+      "name": "Telegram Trigger (Private Career Bot)",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        200,
+        300
+      ],
+      "parameters": {
+        "updates": [
+          "message",
+          "callback_query"
+        ]
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "jobHunterBot",
+          "name": "Job Hunter Bot"
+        }
+      },
+      "webhookId": "p15-ai-personal-job-hunter-telegram-trigger"
+    },
+    {
+      "id": "7249f7f7-ba1f-4827-8258-4f6266bbee47",
+      "name": "Central Auth & Command Router",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// =========================================================================\n// 🔒 CENTRAL AUTH & COMMAND ROUTER (SERHAT KUMAŞ PRIVATE CAREER BOT)\n// =========================================================================\nconst item = $input.first().json;\n\n// Extract update data\nconst message = item.message || {};\nconst callbackQuery = item.callback_query || {};\nconst fromUser = message.from || callbackQuery.from || {};\nconst chatId = String(message.chat?.id || callbackQuery.message?.chat?.id || '');\nconst username = fromUser.username || '';\nconst rawText = (message.text || message.caption || callbackQuery.data || '').trim();\n\n// 🔒 SECURITY CHECK: Private to Serhat Kumaş (chatId: 1519369571)\nconst AUTHORIZED_CHAT_ID = '1519369571';\nif (chatId !== AUTHORIZED_CHAT_ID && !username.toLowerCase().includes('serhatkumas')) {\n  return [{\n    json: {\n      action: 'UNAUTHORIZED',\n      chatId: chatId,\n      replyText: '⛔ <b>Erişim Engellendi</b>\\n\\nBu bot Serhat Kumaş için özel olarak geliştirilmiş otonom kariyer & iş avcısı ajanıdır. Dışarıdan kullanıma kapalıdır.',\n      isJobHunt: false\n    }\n  }];\n}\n\n// Persistent Profile in Workflow Static Data\nconst staticData = $getWorkflowStaticData('global');\nstaticData.userProfile = {\n  name: 'Serhat Kumaş',\n  title: 'Solutions Architect & AI Engineer',\n  seniority: 'Solutions Architect / AI & Backend Software Engineer',\n  targetRoles: [\n    'AI Engineer',\n    'AI Solutions Architect',\n    'Forward Deployed Engineer (FDE)',\n    'Forward Deployed Software Developer',\n    'Backend Developer',\n    'AI Integrations & Applications Engineer'\n  ],\n  focusArea: 'Where AI applications and software meet: Production AI engineering, LLM integrations, AI agents, RAG, tool calling, API design, scalable backends, workflow automation (not academic ML training, but practical applied AI).',\n  currentRole: 'Solutions Architect @ BSH Hausgeräte (Munich) - Multi-agent systems with Google ADK, AWS video platform, enterprise AI solutions',\n  education: [\n    'M.Sc. in Computer Science - Universität Passau (2025 - Current)',\n    'B.Sc. in Computer Engineering - Izmir Institute of Technology (2018 - 2023)',\n    'B.Sc. in Business Administration - Anadolu University (2020 - 2025)'\n  ],\n  languages: ['Turkish (Native)', 'English (C1 - Advanced)', 'German (A2 - In Progress)'],\n  primarySkills: [\n    'Python', 'Java', 'C#', 'JavaScript (ES6+)', 'SQL',\n    'Agentic AI & Multi-Agent Systems',\n    'Google Agent Development Kit (ADK)',\n    'A2A (Agent-to-Agent) Protocols & Intent Routing',\n    'LLM Orchestration & Context Engineering',\n    'Retrieval-Augmented Generation (RAG)',\n    'Guardrails & AI Governance',\n    'OpenAI API & Gemini API & Dialogflow CX',\n    'System Design & Microservices Architecture',\n    'Event-Driven Architecture & RESTful APIs',\n    'Node.js & Spring Boot & Flask',\n    'AWS & Google Cloud (GCP)',\n    'PostgreSQL & SQLite & Redis',\n    'OAuth 2.0 & Enterprise SSO',\n    'React.js & Vue.js & Modern Web',\n    'Docker & CI/CD & Git & Postman',\n    'n8n (Advanced Workflow Automation)',\n    'Distributed Systems & OOP'\n  ],\n  preferredLocations: ['Passau / Munich / Germany', 'Remote (Global & EU)', 'Europe (UK / Netherlands)', 'Turkey'],\n  updatedAt: new Date().toISOString()\n};\nlet storedProfile = staticData.userProfile;\n\nconst lower = rawText.toLowerCase();\n\n// 1. HELP / START\nif (lower === '/start' || lower === '/help' || lower === '/yardim' || lower === 'start') {\n  const intro = `👋 <b>Hoş Geldiniz Serhat Bey!</b>\n🎯 <b>AI Personal Job Hunter & Kariyer Ajanınız Aktif</b>\n━━━━━━━━━━━━━━━━━━━━\nBu bot sizin adınıza <b>LinkedIn</b>, <b>Indeed</b>, <b>Greenhouse</b>, <b>Lever</b> ve dev teknoloji şirketlerinin (Google, Amazon, Meta vb.) kariyer sayfalarını tarayarak profilinize en uygun <b>10 iş ilanını</b> bulur ve yapay zeka ile skorlar.\n\n🛠️ <b>Kayıtlı Hedef Roller:</b>\n• AI Engineer & AI Solutions Architect\n• Forward Deployed Engineer (FDE)\n• Forward Deployed Software Developer\n• Backend Developer & AI Integrations\n\n📍 <b>Kullanabileceğiniz Komutlar:</b>\n• <code>/hunt</code> ➔ En güncel 10 global/remote iş fırsatını tara\n• <code>/hunt remote</code> ➔ Yalnızca %100 Remote ilanları listele\n• <code>/hunt Germany</code> / <code>/hunt London</code> ➔ Belirli ülke/şehirdeki ilanları listele\n• <code>/mycv</code> ➔ Sistem hafızasındaki güncel CV profilinizi görüntüleyin\n• <i>(Yeni bir CV metni veya PDF göndererek profilinizi dilediğiniz an güncelleyebilirsiniz)</i>\n\n👇 Aşağıdaki butonları kullanarak hemen bir arama başlatabilirsiniz:`;\n\n  return [{\n    json: {\n      action: 'DIRECT_REPLY',\n      chatId: chatId,\n      replyText: intro,\n      replyButtons: [\n        [\n          { text: '🎯 10 İş İlanı Bul (/hunt)', callback_data: 'hunt_default' },\n          { text: '🌐 Yalnızca Remote', callback_data: 'hunt_remote' }\n        ],\n        [\n          { text: '🇪🇺 Avrupa İlanları', callback_data: 'hunt_eu' },\n          { text: '🇹🇷 Türkiye İlanları', callback_data: 'hunt_tr' }\n        ],\n        [\n          { text: '📄 Kayıtlı CV Profilim', callback_data: 'view_cv' }\n        ]\n      ],\n      isJobHunt: false\n    }\n  }];\n}\n\n// 2. VIEW CV PROFILE\nif (lower === '/mycv' || lower === 'view_cv' || lower === 'cv' || lower === 'profil') {\n  let profileText = `📄 <b>Kayıtlı CV & Kariyer Profiliniz:</b>\n━━━━━━━━━━━━━━━━━━━━\n👤 <b>Aday:</b> ${storedProfile.name || 'Serhat Kumaş'}\n💼 <b>Pozisyon:</b> ${storedProfile.title || 'Solutions Architect & AI Engineer'}\n🏢 <b>Mevcut Rol:</b> Solutions Architect @ BSH Hausgeräte (Munich)\n🎓 <b>Eğitim:</b> Universität Passau (M.Sc. CS), İYTE (B.Sc. Bilgisayar Müh.)\n🗣️ <b>Diller:</b> Türkçe (Anadil), İngilizce (C1 - İleri), Almanca (A2)\n🎯 <b>Odak Alanı:</b> ${storedProfile.focusArea}\n\n🛠️ <b>Hedef Pozisyonlar:</b>\n${(storedProfile.targetRoles || []).map(r => `• ${r}`).join('\\n')}\n\n💻 <b>Öne Çıkan Yetenek Seti:</b>\n• <b>AI & Ajan Sistemleri:</b> Agentic AI, Multi-Agent Systems, Google ADK, A2A Protocols, RAG, Prompt Engineering, Guardrails & Governance, OpenAI API, Dialogflow CX\n• <b>Backend, Cloud & Mimari:</b> System Design, Microservices, Event-Driven, Node.js, Spring Boot, Flask, AWS, GCP, PostgreSQL, OAuth 2.0, SSO\n• <b>Programlama Dilleri:</b> Python, Java, C#, JavaScript (ES6+), SQL, Solidity\n• <b>Araçlar & Otomasyon:</b> n8n, Docker, Git, CI/CD, Postman, Jira, OOP\n\n🌍 <b>Tercih Edilen Lokasyonlar:</b>\n${(storedProfile.preferredLocations || ['Germany', 'Remote', 'Europe', 'Turkey']).join(' • ')}\n\n🗓️ <i>Son Güncelleme: ${new Date(storedProfile.updatedAt || Date.now()).toLocaleString('tr-TR')}</i>\n━━━━━━━━━━━━━━━━━━━━\n💡 <i>Profiliniz en güncel CV'niz doğrultusunda tam senkronize edilmiştir.</i>`;\n\n  return [{\n    json: {\n      action: 'DIRECT_REPLY',\n      chatId: chatId,\n      replyText: profileText,\n      replyButtons: [\n        [\n          { text: '🎯 Bu Profile Uygun İlanları Tara', callback_data: 'hunt_default' },\n          { text: '🌐 Remote Ara', callback_data: 'hunt_remote' }\n        ]\n      ],\n      isJobHunt: false\n    }\n  }];\n}\n\n// 3. CV UPDATE VIA TEXT (User pasted or typed CV text)\nif (rawText.length > 150 && (lower.includes('experience') || lower.includes('deneyim') || lower.includes('skills') || lower.includes('yetenek') || lower.includes('education') || lower.includes('eğitim') || lower.includes('developer') || lower.includes('engineer'))) {\n  // Update rawCvText in stored profile\n  const updatedProfile = {\n    ...(storedProfile || {}),\n    name: 'Serhat Kumaş',\n    chatId: chatId,\n    updatedAt: new Date().toISOString(),\n    rawCvText: rawText,\n    summary: rawText.slice(0, 300) + '...'\n  };\n  staticData.userProfile = updatedProfile;\n  storedProfile = updatedProfile;\n\n  return [{\n    json: {\n      action: 'DIRECT_REPLY',\n      chatId: chatId,\n      replyText: `✅ <b>CV Metniniz Başarıyla Kaydedildi!</b>\\n━━━━━━━━━━━━━━━━━━━━\\nSistem hafızası güncellendi. Artık <code>/hunt</code> komutuyla iş araması yaptığınızda yeni profil detaylarınız dikkate alınacaktır.`,\n      replyButtons: [\n        [{ text: '🎯 Hemen 10 Eşleşen İlan Bul', callback_data: 'hunt_default' }]\n      ],\n      isJobHunt: false\n    }\n  }];\n}\n\n// 4. JOB HUNT TRIGGER\nlet locationFilter = 'remote';\nlet customRole = '';\n\nif (lower.startsWith('/hunt') || lower.startsWith('hunt') || lower.startsWith('iş bul') || lower.startsWith('iş ara')) {\n  const parts = rawText.replace(/^\\/hunt/i, '').replace(/^hunt/i, '').trim();\n  if (parts) {\n    locationFilter = parts;\n  }\n} else if (rawText === 'hunt_default' || rawText === 'hunt_remote') {\n  locationFilter = 'remote';\n} else if (rawText === 'hunt_eu') {\n  locationFilter = 'Europe OR Germany OR UK OR Netherlands';\n} else if (rawText === 'hunt_tr') {\n  locationFilter = 'Turkey OR Istanbul OR Ankara';\n}\n\nreturn [{\n  json: {\n    action: 'JOB_HUNT',\n    chatId: chatId,\n    locationFilter: locationFilter,\n    targetRoles: storedProfile?.targetRoles || [\n      'AI Engineer',\n      'AI Solutions Architect',\n      'Forward Deployed Engineer',\n      'Forward Deployed Software Developer',\n      'Backend Developer',\n      'AI Integrations Engineer'\n    ],\n    primarySkills: storedProfile?.primarySkills || [],\n    focusArea: storedProfile?.focusArea || '',\n    isJobHunt: true\n  }\n}];"
+      }
+    },
+    {
+      "id": "5be2999a-6531-475d-98a8-decc5037cdfc",
+      "name": "Is Job Hunt Request?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        680,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.isJobHunt }}",
+              "value2": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "fcd5be59-5d9f-4b48-b885-6d8f6423f2b4",
+      "name": "Send Direct Telegram Reply",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        920,
+        480
+      ],
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.replyText }}",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "reply_markup": {
+            "inline_keyboard": "={{ $json.replyButtons || [] }}"
+          }
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "jobHunterBot",
+          "name": "Job Hunter Bot"
+        }
+      }
+    },
+    {
+      "id": "1d770623-4fa3-49b6-855a-ed413d1137da",
+      "name": "Send Searching Notice to Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        920,
+        180
+      ],
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "=🔍 <b>Kişiselleştirilmiş İş Avı Başlatıldı!</b>\n━━━━━━━━━━━━━━━━━━━━\n🎯 <b>Hedef Pozisyonlar:</b> AI Engineer, Forward Deployed, AI Solutions Architect, Backend Developer\n📍 <b>Konum / Filtre:</b> <code>{{ $json.locationFilter }}</code>\n🌐 <b>Taranan Kaynaklar:</b> LinkedIn Jobs, Indeed, Greenhouse, Lever, Google & Amazon Careers\n🧠 <b>Eşleştirme Modeli:</b> Gemini 3.1 Flash-Lite AI Matchmaker\n\n⏳ <i>Canlı ilanlar taranıyor ve CV profilinizle kıyaslanıyor (yaklaşık 20-30 saniye)...</i>",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "jobHunterBot",
+          "name": "Job Hunter Bot"
+        }
+      }
+    },
+    {
+      "id": "8744f862-5008-401f-90a3-edb728c421fd",
+      "name": "Prepare Apify Job Search Queries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1160,
+        180
+      ],
+      "parameters": {
+        "jsCode": "// =========================================================================\n// 🌐 PREPARE HIGH-PRECISION APIFY JOB SEARCH QUERIES\n// =========================================================================\nconst huntData = $('Central Auth & Command Router').first().json;\nconst loc = huntData.locationFilter || 'remote';\n\n// Formulate queries targeted at live job openings\nconst queries = [\n  // 1. LinkedIn Jobs - AI Engineer & Forward Deployed\n  `(\"AI Engineer\" OR \"Forward Deployed Engineer\") (\"${loc}\") site:linkedin.com/jobs/view`,\n  \n  // 2. LinkedIn Jobs - AI Solutions Architect & AI Integration\n  `(\"AI Solutions Architect\" OR \"AI Integration Engineer\" OR \"AI Application Engineer\") (\"${loc}\") site:linkedin.com/jobs/view`,\n  \n  // 3. Indeed Jobs - Backend Developer AI & LLM\n  `(\"Backend Developer\" OR \"Software Engineer\") (\"AI\" OR \"LLM\") (\"${loc}\") site:indeed.com/viewjob`,\n  \n  // 4. Greenhouse & Lever (Top tech startups & scaleups)\n  `(\"AI Engineer\" OR \"Forward Deployed\" OR \"AI Integrations\") (\"${loc}\") (site:jobs.lever.co OR site:boards.greenhouse.io)`,\n  \n  // 5. Big Tech Career Portals (Google, Amazon, Meta, Microsoft)\n  `(\"AI Engineer\" OR \"Forward Deployed Software Developer\" OR \"Solutions Architect\") site:amazon.jobs OR site:careers.google.com`,\n  \n  // 6. Direct Remote AI Software Roles\n  `(\"AI Engineer\" OR \"Forward Deployed Engineer\") (\"remote\" OR \"work from home\") site:linkedin.com/jobs/view`\n];\n\nreturn [{\n  json: {\n    ...huntData,\n    queries: queries,\n    apifyPayload: {\n      queries: queries.join('\\n'),\n      maxPagesPerQuery: 2,\n      resultsPerPage: 10,\n      customDataFunction: `async ({ input, $, request, response, html }) => {\n        return {\n          url: request.url\n        };\n      };`\n    }\n  }\n}];"
+      }
+    },
+    {
+      "id": "6bec67eb-aa7e-4e38-b30e-7aba30ffdd1c",
+      "name": "Scrape Live Job Postings (Apify)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1400,
+        180
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/apify~google-search-scraper/run-sync-get-dataset-items",
+        "authentication": "none",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "token",
+              "value": "YOUR_APIFY_API_TOKEN"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.apifyPayload) }}",
+        "options": {
+          "timeout": 120000
+        }
+      }
+    },
+    {
+      "id": "48092f01-8e3d-481f-8784-5f2b2d93a427",
+      "name": "Filter & Clean Raw Job Opportunities",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1640,
+        180
+      ],
+      "parameters": {
+        "jsCode": "// =========================================================================\n// 🧹 EXTRACT, CLEAN & DEDUPLICATE RAW JOB POSTINGS\n// =========================================================================\nconst items = $input.all();\nconst huntData = $('Central Auth & Command Router').first().json;\n\nconst rawJobs = [];\nconst seenUrls = new Set();\n\nfor (const it of items) {\n  const row = it.json;\n  const organicResults = row.organicResults || [];\n  \n  for (const org of organicResults) {\n    const url = org.url || '';\n    const title = org.title || '';\n    const description = org.description || '';\n    \n    if (!url || seenUrls.has(url)) continue;\n    \n    // Check if it's a job posting URL\n    const isJobUrl = url.includes('linkedin.com/jobs') ||\n                     url.includes('indeed.com') ||\n                     url.includes('jobs.lever.co') ||\n                     url.includes('boards.greenhouse.io') ||\n                     url.includes('amazon.jobs') ||\n                     url.includes('careers.google.com') ||\n                     url.includes('smartrecruiters.com') ||\n                     url.includes('workable.com') ||\n                     url.includes('ashbyhq.com');\n                     \n    if (!isJobUrl && !title.toLowerCase().includes('engineer') && !title.toLowerCase().includes('developer')) {\n      continue;\n    }\n    \n    seenUrls.add(url);\n    \n    // Extract company name heuristically\n    let company = 'Tech Company';\n    if (url.includes('linkedin.com')) {\n      const match = title.match(/at\\s+([^|\\-\\–]+)/i) || title.match(/\\-\\s+([^|\\-\\–]+)/);\n      if (match) company = match[1].trim();\n    } else if (url.includes('lever.co')) {\n      const parts = url.split('/');\n      company = parts[3] ? parts[3].toUpperCase() : 'Startup';\n    } else if (url.includes('greenhouse.io')) {\n      const parts = url.split('/');\n      company = parts[3] ? parts[3].toUpperCase() : 'Company';\n    } else if (url.includes('amazon.jobs')) {\n      company = 'Amazon';\n    } else if (url.includes('careers.google.com')) {\n      company = 'Google';\n    }\n    \n    rawJobs.push({\n      title: title.replace(/\\|.*$/, '').replace(/\\-.*$/, '').trim(),\n      company: company,\n      snippet: description,\n      url: url\n    });\n  }\n}\n\n// Keep up to 35 candidates for Gemini evaluation\nconst candidates = rawJobs.slice(0, 35);\n\nreturn [{\n  json: {\n    ...huntData,\n    candidateCount: candidates.length,\n    candidates: candidates\n  }\n}];"
+      }
+    },
+    {
+      "id": "980d0d4e-4dd9-44e9-963f-a1cad25a072e",
+      "name": "Prepare Gemini Matchmaker Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1880,
+        180
+      ],
+      "parameters": {
+        "jsCode": "// =========================================================================\n// ✍️ PREPARE GEMINI 3.1 AI CAREER MATCHMAKER PROMPT\n// =========================================================================\nconst data = $input.first().json;\nconst candidates = data.candidates || [];\n\n// Read full CV profile from staticData or fallback\nconst staticData = $getWorkflowStaticData('global');\nconst profile = staticData.userProfile || {\n  name: 'Serhat Kumaş',\n  seniority: 'Mid-to-Senior / Lead AI Solutions & Software Engineer',\n  targetRoles: data.targetRoles || [],\n  focusArea: data.focusArea || 'Pratik AI mühendisliği, LLM entegrasyonları, yapay zeka ajanları (agents), RAG sistemleri, API orkestrasyonu, ölçeklenebilir backend yazılım mimarisi.',\n  primarySkills: data.primarySkills || []\n};\n\nconst prompt = `Sen dünya çapında üst düzey teknoloji yeteneklerini değerlendiren uzman bir AI Kariyer Danışmanı ve Başvuru Stratejistisin.\n\nADAY PROFİLİ:\n- İsim: Serhat Kumaş\n- Unvan & Kıdem: Solutions Architect / AI & Backend Software Engineer (M.Sc. CS at Univ Passau, B.Sc. Comp Eng at IZTECH)\n- Güncel Deneyim: Solutions Architect @ BSH Hausgeräte (Munich) - Google Agent Development Kit (ADK), Agent-to-Agent (A2A) hiyerarşik çoklu ajan sistemleri, AWS üzerinde full-stack video platformu (React/Node.js/SSO/OAuth), kurumsal AI çözümleri.\n- Hedef Roller: ${JSON.stringify(profile.targetRoles)}\n- Odak Alanı: ${profile.focusArea || 'Where AI applications and software meet: Production AI engineering, LLM integrations, AI agents, RAG, tool calling, API design, scalable backends, workflow automation (not academic ML training, but practical applied AI).'}\n- Temel Yetenekler:\n  * AI & Ajanlar: Agentic AI, Multi-Agent Systems, Google Agent Development Kit (ADK), A2A Protocols, RAG, Prompt Engineering, Guardrails & AI Governance, OpenAI API, Gemini API, Dialogflow CX\n  * Backend & Cloud: System Design, Microservices, Event-Driven Architecture, RESTful APIs, Node.js, Spring Boot, Flask, AWS, GCP, PostgreSQL, OAuth 2.0, SSO, Distributed Systems\n  * Diller: Python, Java, C#, JavaScript (ES6+), SQL, Solidity\n  * Araçlar & Otomasyon: n8n (Workflow Automation), Docker, Git, CI/CD, Postman, Jira, OOP\n- Diller: Türkçe (Anadil), İngilizce (C1 - İleri Seviye), Almanca (A2)\n- Tercih Edilen Lokasyonlar: ${JSON.stringify(profile.preferredLocations || ['Germany', 'Remote', 'Europe', 'Turkey'])}\n\nGÖREVİN:\nAşağıda verilen ${candidates.length} adet ham iş ilanını Serhat'ın profil ve yetenekleriyle derinlemesine kıyasla.\nAdayın profiline EN ÇOK UYAN en kaliteli 10 iş ilanını seç, her birine 100 üzerinden uygunluk skoru ver ve aşağıdaki formatta JSON olarak döndür.\n\nDEĞERLENDİRME KRİTERLERİ:\n1. Pratik AI mühendisliği, Forward Deployed geliştirme, LLM/Agent entegrasyonu ve backend mimarisi içeren ilanlara EN YÜKSEK skorları (%90-99) ver.\n2. Neden uygun olduğunu (whyFit) samimi, profesyonel ve ikna edici 1-2 cümleyle açıkla (Serhat'ın hangi gücüyle bu işin tam oturduğunu belirt).\n3. Eşleşen kritik yetenekleri (matchingSkills) adayın CV'sinden 3-4 madde olarak belirt.\n4. Çalışma modelini belirle (Remote, Hybrid, London, Istanbul, vb.).\n\nİŞ İLANLARI LİSTESİ:\n${JSON.stringify(candidates, null, 2)}\n\nÇIKTI FORMATI:\nYalnızca geçerli bir JSON array döndür (kesinlikle markdown bloğu veya fazladan metin ekleme):\n[\n  {\n    \"title\": \"İlan Başlığı (Örn: Forward Deployed AI Engineer)\",\n    \"company\": \"Şirket Adı\",\n    \"location\": \"Remote / London / Istanbul\",\n    \"fitScore\": 95,\n    \"fitBadge\": \"🌟 Mükemmel Eşleşme (%95)\",\n    \"whyFit\": \"Neden Serhat'ın profiline tam oturuyor (1-2 profesyonel Türkçe cümle)\",\n    \"matchingSkills\": [\"Python\", \"LLM Agents\", \"FastAPI\", \"API Integrations\"],\n    \"applyUrl\": \"İlanın orijinal başvuru URL adresi\"\n  }\n]`;\n\nreturn [{\n  json: {\n    ...data,\n    geminiPrompt: prompt\n  }\n}];"
+      }
+    },
+    {
+      "id": "71fa1d8c-cdbb-4331-99d7-99b1ffe7cea7",
+      "name": "Agent: AI Career Matchmaker (Gemini 3.1)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2120,
+        180
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [\n    {\n      \"parts\": [\n        {\n          \"text\": {{ JSON.stringify($json.geminiPrompt) }}\n        }\n      ]\n    }\n  ],\n  \"generationConfig\": {\n    \"temperature\": 0.4,\n    \"responseMimeType\": \"application/json\"\n  }\n}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "googlePalmApi": {
+          "id": "zvLpU1ScjMCeOYQq",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "id": "6661704d-fac7-4103-b37c-423f23452739",
+      "name": "Format Top 10 Job Cards with Action Buttons",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2360,
+        180
+      ],
+      "parameters": {
+        "jsCode": "\nfunction fixTurkishMojibake(str) {\n  if (!str) return \"\";\n  return String(str)\n    // GBK/CP936 Mojibake mapping (common in some LLM tokenizers when generating Turkish in JSON mode)\n    .replace(/脺/g, 'Ü').replace(/脰/g, 'Ö').replace(/脟/g, 'Ç').replace(/艧/g, 'ş').replace(/艦/g, 'Ş')\n    .replace(/莽/g, 'ç').replace(/臒/g, 'ğ').replace(/臑/g, 'Ğ').replace(/眉/g, 'ü').replace(/枚/g, 'ö')\n    .replace(/谋/g, 'ı').replace(/陌/g, 'İ')\n    // Latin-1 / Windows-1252 Mojibake mapping\n    .replace(/Ã¼/g, 'ü').replace(/Ãœ/g, 'Ü').replace(/Ã¶/g, 'ö').replace(/Ã–/g, 'Ö')\n    .replace(/Ã§/g, 'ç').replace(/Ã‡/g, 'Ç').replace(/ÄŸ/g, 'ğ').replace(/Äž/g, 'Ğ')\n    .replace(/Ä±/g, 'ı').replace(/Ä°/g, 'İ').replace(/ÅŸ/g, 'ş').replace(/Åž/g, 'Ş');\n}\n\n// =========================================================================\n// 📱 FORMAT TOP 10 JOB MATCHES INTO BEAUTIFUL TELEGRAM CARDS\n// =========================================================================\nconst res = $input.first().json;\nconst huntData = $('Central Auth & Command Router').first().json;\n\nlet matchedJobs = [];\ntry {\n  let rawText = res.candidates?.[0]?.content?.parts?.[0]?.text || '[]';\n  rawText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();\n  rawText = fixTurkishMojibake(rawText);\n  matchedJobs = JSON.parse(rawText);\n} catch (e) {\n  matchedJobs = [];\n}\n\nif (!Array.isArray(matchedJobs) || matchedJobs.length === 0) {\n  return [{\n    json: {\n      chatId: huntData.chatId,\n      messageText: `⚠️ <b>Arama Tamamlandı Fakat Doğrudan Eşleşen İlan Bulunamadı</b>\\n\\nFiltre: <code>${huntData.locationFilter}</code>\\n\\nLütfen arama teriminizi genişleterek tekrar deneyin (Örn: <code>/hunt remote</code> veya <code>/hunt Europe</code>).`,\n      replyButtons: [\n        [{ text: '🔄 Tekrar Dene (Remote)', callback_data: 'hunt_remote' }],\n        [{ text: '🌍 Tümünü Tara', callback_data: 'hunt_default' }]\n      ]\n    }\n  }];\n}\n\n// Sort by fitScore descending & take top 10\nmatchedJobs.sort((a, b) => (b.fitScore || 0) - (a.fitScore || 0));\nconst top10 = matchedJobs.slice(0, 10);\n\n// Build Part 1 (Jobs 1 to 5)\nlet part1Text = `🎯 <b>Serhat Kumaş için En Uygun 10 İş Fırsatı (Bölüm 1/2)</b>\n━━━━━━━━━━━━━━━━━━━━\n📍 <b>Filtre:</b> <code>${huntData.locationFilter}</code> | ⚡ <b>AI Skorlama:</b> Gemini 3.1\n`;\n\n// Build Part 2 (Jobs 6 to 10)\nlet part2Text = `🎯 <b>Serhat Kumaş için En Uygun 10 İş Fırsatı (Bölüm 2/2)</b>\n━━━━━━━━━━━━━━━━━━━━\n`;\n\ntop10.forEach((j, idx) => {\n  const num = idx + 1;\n  const title = fixTurkishMojibake(j.title || 'AI Software Engineer');\n  const company = fixTurkishMojibake(j.company || 'Teknoloji Şirketi');\n  const loc = fixTurkishMojibake(j.location || 'Remote');\n  const badge = fixTurkishMojibake(j.fitBadge || `⭐ %${j.fitScore || 90} Uygunluk`);\n  const why = fixTurkishMojibake(j.whyFit || 'Profilinizdeki AI mühendisliği ve entegrasyon yetenekleriyle tam örtüşüyor.');\n  const skills = (j.matchingSkills || []).join(' • ');\n  const applyUrl = j.applyUrl || '#';\n\n  const card = `\n${num}️⃣ <b>${title}</b>\n🏢 <b>Şirket:</b> ${company} | 📍 <b>Konum:</b> ${loc}\n📊 <b>Uyum:</b> <b>${badge}</b>\n💡 <b>Neden Uygun:</b> ${why}\n🛠️ <b>Eşleşen Yetenekler:</b> <code>${skills}</code>\n🔗 👉 <a href=\"${applyUrl}\"><b>[ Hemen Başvur & Detayları Gör ↗ ]</b></a>\n━━━━━━━━━━━━━━━━━━━━`;\n\n  if (idx < 5) {\n    part1Text += card;\n  } else {\n    part2Text += card;\n  }\n});\n\nconst inlineButtons = [\n  [\n    { text: '🔄 Yeniden Ara', callback_data: 'hunt_default' },\n    { text: '🌐 Sadece Remote', callback_data: 'hunt_remote' }\n  ],\n  [\n    { text: '🇪🇺 Avrupa İlanları', callback_data: 'hunt_eu' },\n    { text: '🇹🇷 Türkiye İlanları', callback_data: 'hunt_tr' }\n  ],\n  [\n    { text: '📄 CV Profilimi Gör', callback_data: 'view_cv' }\n  ]\n];\n\nreturn [\n  {\n    json: {\n      chatId: huntData.chatId,\n      messageText: part1Text,\n      replyButtons: []\n    }\n  },\n  {\n    json: {\n      chatId: huntData.chatId,\n      messageText: part2Text,\n      replyButtons: inlineButtons\n    }\n  }\n];"
+      }
+    },
+    {
+      "id": "874726e4-e386-43fe-b640-3581b5e32e47",
+      "name": "Send Top 10 Job Matches to Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2600,
+        180
+      ],
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.messageText }}",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "reply_markup": {
+            "inline_keyboard": "={{ $json.replyButtons || [] }}"
+          }
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "jobHunterBot",
+          "name": "Job Hunter Bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger (Private Career Bot)": {
+      "main": [
+        [
+          {
+            "node": "Central Auth & Command Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Central Auth & Command Router": {
+      "main": [
+        [
+          {
+            "node": "Is Job Hunt Request?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Job Hunt Request?": {
+      "main": [
+        [
+          {
+            "node": "Send Searching Notice to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Direct Telegram Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Searching Notice to Telegram": {
+      "main": [
+        [
+          {
+            "node": "Prepare Apify Job Search Queries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Apify Job Search Queries": {
+      "main": [
+        [
+          {
+            "node": "Scrape Live Job Postings (Apify)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scrape Live Job Postings (Apify)": {
+      "main": [
+        [
+          {
+            "node": "Filter & Clean Raw Job Opportunities",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter & Clean Raw Job Opportunities": {
+      "main": [
+        [
+          {
+            "node": "Prepare Gemini Matchmaker Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Gemini Matchmaker Prompt": {
+      "main": [
+        [
+          {
+            "node": "Agent: AI Career Matchmaker (Gemini 3.1)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agent: AI Career Matchmaker (Gemini 3.1)": {
+      "main": [
+        [
+          {
+            "node": "Format Top 10 Job Cards with Action Buttons",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Top 10 Job Cards with Action Buttons": {
+      "main": [
+        [
+          {
+            "node": "Send Top 10 Job Matches to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Istanbul",
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  }
+}

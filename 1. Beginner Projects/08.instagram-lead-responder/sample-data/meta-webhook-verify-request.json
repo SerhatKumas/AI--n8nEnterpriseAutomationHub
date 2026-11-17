@@ -1,0 +1,15 @@
+{
+  "headers": {
+    "host": "n8n.codewaft.com",
+    "user-agent": "facebookexternalua",
+    "accept": "*/*"
+  },
+  "params": {},
+  "query": {
+    "hub.mode": "subscribe",
+    "hub.verify_token": "YOUR_VERIFY_TOKEN",
+    "hub.challenge": "1158201444"
+  },
+  "body": {}
+}
+

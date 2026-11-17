@@ -1,0 +1,1428 @@
+{
+  "name": "Telegram Bot to Social Media Content Studio (Instagram Drafts & Direct Publish)",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message",
+          "callback_query"
+        ],
+        "additionalFields": {}
+      },
+      "id": "telegram-bot-trigger",
+      "name": "Telegram Bot Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        80,
+        400
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "9UcTg4aDLdnfs85T",
+          "name": "Codewaft Content Creation Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// =========================================================================\n// 🧭 ROUTE & PARSE INCOMING TELEGRAM EVENT (Text, Voice, or Callback Query)\n// =========================================================================\nconst input = $input.first()?.json || {};\nconst DEFAULT_CHAT_ID = \"1519369571\"; // Serhat Kumas Telegram Chat ID\n\n// Access workflow persistent memory\nconst staticData = $getWorkflowStaticData(\"global\");\nstaticData.sessions = staticData.sessions || {};\nstaticData.processedUpdates = staticData.processedUpdates || {};\n\n// Critical: Strip any heavy base64 image strings from staticData so n8n task runner stays featherlight (<5KB)\nif (staticData.images) {\n  delete staticData.images;\n}\n// Also cap __images cache at 20 entries\nif (staticData.__images) { delete staticData.__images; }\nif (staticData.sessions) {\n  for (const s of Object.values(staticData.sessions)) {\n    if (s.currentDraft?.carouselSlides) {\n      s.currentDraft.carouselSlides.forEach(slide => { delete slide.base64; });\n    }\n  }\n}\nif (staticData.lastDraft?.carouselSlides) {\n  staticData.lastDraft.carouselSlides.forEach(slide => { delete slide.base64; });\n}\n\n// Clean up old processed updates (older than 3 min) AND cap at 30 entries\nconst now = Date.now();\nfor (const [key, timestamp] of Object.entries(staticData.processedUpdates)) {\n  if (now - timestamp > 180000) {\n    delete staticData.processedUpdates[key];\n  }\n}\n// Hard cap: keep only 30 most recent entries to prevent unbounded growth\nconst puKeys = Object.keys(staticData.processedUpdates);\nif (puKeys.length > 30) {\n  const sorted = puKeys.sort((a, b) => staticData.processedUpdates[a] - staticData.processedUpdates[b]);\n  sorted.slice(0, puKeys.length - 30).forEach(k => delete staticData.processedUpdates[k]);\n}\n\n// 1. Thorough Callback Query Detection (handles callback_query, query, callbackQuery, and unwrapped updates)\nconst cq = input.callback_query || \n           input.query || \n           input.callbackQuery || \n           input.body?.callback_query || \n           input.update?.callback_query || \n           (input.data !== undefined && (input.id !== undefined || input.from !== undefined) ? input : null);\n\nif (cq || input.data !== undefined) {\n  const actualCq = cq || input;\n  const callbackId = actualCq.id || actualCq.query_id || input.id || \"cb_\" + Date.now();\n  const callbackData = String(actualCq.data || input.data || \"\").trim();\n  const chatId = String(actualCq.message?.chat?.id || actualCq.from?.id || input.message?.chat?.id || input.from?.id || DEFAULT_CHAT_ID);\n  const messageId = actualCq.message?.message_id || input.message?.message_id;\n  const userSession = staticData.sessions[chatId] || { state: \"idle\" };\n\n  // Deduplicate callback clicks\n  const cbKey = \"cb_\" + chatId + \"_\" + callbackId;\n  if (staticData.processedUpdates[cbKey]) {\n    return [{ json: { eventType: \"ignored\", reason: \"duplicate_callback\", chatId } }];\n  }\n  staticData.processedUpdates[cbKey] = now;\n\n  const messageText = actualCq.message?.text || input.message?.text || \"\";\n  const messageCaption = actualCq.message?.caption || input.message?.caption || \"\";\n  const messageEntities = actualCq.message?.entities || actualCq.message?.caption_entities || input.message?.entities || [];\n\n  return [{\n    json: {\n      eventType: \"callback\",\n      callbackId,\n      callbackData,\n      chatId,\n      messageId,\n      userSession,\n      messageText,\n      messageCaption,\n      messageEntities,\n      timestamp: new Date().toISOString()\n    }\n  }];\n}\n\n// 2. Handle Message (Voice Note or Regular Text)\nconst msg = input.message || input.msg || input;\nconst chatId = String(msg.chat?.id || msg.from?.id || input.from?.id || DEFAULT_CHAT_ID);\nconst messageId = msg.message_id || input.message_id;\nconst updateId = input.update_id || (messageId ? (chatId + \"_\" + messageId) : null);\nconst userSession = staticData.sessions[chatId] || { state: \"idle\" };\n\n// 2.0 Deduplication Guard: Ignore if exact same update / message was already processed\nif (updateId) {\n  const uKey = \"msg_\" + updateId;\n  if (staticData.processedUpdates[uKey]) {\n    return [{ json: { eventType: \"ignored\", reason: \"duplicate_update\", chatId } }];\n  }\n  staticData.processedUpdates[uKey] = now;\n}\n\n// 2a. Voice Note / Audio Message\nconst voiceObj = msg.voice || msg.audio || input.voice || input.audio;\nif (voiceObj) {\n  return [{\n    json: {\n      eventType: \"voice\",\n      fileId: voiceObj.file_id,\n      duration: voiceObj.duration,\n      mimeType: voiceObj.mime_type || \"audio/ogg\",\n      chatId,\n      messageId,\n      userSession,\n      timestamp: new Date().toISOString()\n    }\n  }];\n}\n\n// 2b. Regular Text Message - ONLY IF text is non-empty!\nconst rawText = String(msg.text || input.text || \"\").trim();\nif (rawText.length > 0) {\n  // Debounce identical text from same user within 4 seconds (prevents rapid multi-queue triggers)\n  const textHash = \"txt_\" + chatId + \"_\" + rawText.slice(0, 60);\n  if (staticData.processedUpdates[textHash] && (now - staticData.processedUpdates[textHash] < 4000)) {\n    return [{ json: { eventType: \"ignored\", reason: \"debounced_duplicate_text\", chatId } }];\n  }\n  staticData.processedUpdates[textHash] = now;\n\n  return [{\n    json: {\n      eventType: \"text\",\n      rawText,\n      chatId,\n      messageId,\n      userSession,\n      timestamp: new Date().toISOString()\n    }\n  }];\n}\n\n// 2c. Unrecognized or empty update - never default to text!\nreturn [{\n  json: {\n    eventType: \"ignored\",\n    chatId,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "route-parse-event",
+      "name": "Route & Parse Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.eventType }}",
+                    "rightValue": "voice",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.eventType }}",
+                    "rightValue": "text",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.eventType }}",
+                    "rightValue": "callback",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        }
+      },
+      "id": "switch-event-type",
+      "name": "Switch Event Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        520,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "operation": "get",
+        "fileId": "={{ $json.fileId }}",
+        "download": true
+      },
+      "id": "telegram-download-voice",
+      "name": "Telegram: Download Voice File",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        780,
+        180
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "9UcTg4aDLdnfs85T",
+          "name": "Codewaft Content Creation Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare voice audio buffer for Gemini 3.5 Flash Lite multimodal input\nconst items = $input.all();\nconst output = [];\n\nfor (let i = 0; i < items.length; i++) {\n  const item = items[i];\n  if (!item.binary?.data) {\n    throw new Error('No audio binary found in \"data\". Voice download may have failed.');\n  }\n\n  const buffer = await this.helpers.getBinaryDataBuffer(i, 'data');\n  if (!buffer.length) {\n    throw new Error('Downloaded audio is empty. Try sending voice message again.');\n  }\n\n  const meta = $('Route & Parse Event').first().json;\n\n  output.push({\n    json: {\n      chatId: meta.chatId,\n      audioMimeType: item.binary.data.mimeType || 'audio/ogg',\n      audioBase64: buffer.toString('base64'),\n      userSession: meta.userSession\n    },\n    pairedItem: { item: i }\n  });\n}\n\nreturn output;"
+      },
+      "id": "prepare-voice-audio",
+      "name": "Prepare Voice Audio",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [\n    {\n      \"parts\": [\n        {\n          \"text\": \"Listen carefully to this user voice recording. Transcribe the spoken speech verbatim in the original language spoken (e.g. English, Turkish, German). Return ONLY the transcription text, without any quotes or explanations.\"\n        },\n        {\n          \"inlineData\": {\n            \"mimeType\": \"{{ $json.audioMimeType }}\",\n            \"data\": \"{{ $json.audioBase64 }}\"\n          }\n        }\n      ]\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "gemini-transcribe-audio",
+      "name": "Gemini 3.5: Transcribe Voice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1220,
+        180
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "zvLpU1ScjMCeOYQq",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract transcription text and convert to standardized text payload\nconst resp = $input.first()?.json || {};\nconst audioMeta = $('Prepare Voice Audio').first().json;\n\nconst text = resp.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';\nif (!text) {\n  throw new Error('Gemini could not transcribe audio or speech was silent. Please try again or type text.');\n}\n\nreturn [{\n  json: {\n    eventType: 'text',\n    rawText: text,\n    chatId: audioMeta.chatId,\n    isFromVoice: true,\n    userSession: audioMeta.userSession,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "extract-voice-text",
+      "name": "Extract Voice Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// =========================================================================\n// 🧠 INTENT, FORMAT & SESSION EVALUATOR  (v2 – task-runner safe)\n// =========================================================================\nconst item = $input.first()?.json || {};\nconst text = String(item.rawText || \"\").trim();\nconst chatId = String(item.chatId);\nconst isFromVoice = Boolean(item.isFromVoice);\n\n// Guard against empty / spurious triggers\nif (!text) {\n  return [];\n}\n\n// ── Lightweight staticData access with self-healing size guard ──────────\nconst staticData = $getWorkflowStaticData(\"global\");\nstaticData.sessions = staticData.sessions || {};\nstaticData.processedUpdates = staticData.processedUpdates || {};\n\n// SAFETY: If staticData has become too large, nuke it to prevent runner crash\ntry {\n  const blob = JSON.stringify(staticData);\n  if (blob.length > 80000) { // 80 KB hard cap\n    console.log(\"[SAFETY] staticData too large (\" + blob.length + \" bytes), resetting to prevent runner crash\");\n    staticData.sessions = {};\n    staticData.processedUpdates = {};\n    delete staticData.__images;\n    delete staticData.images;\n  }\n} catch(e) {\n  staticData.sessions = {};\n  staticData.processedUpdates = {};\n}\n\n// Also strip any base64 that might have slipped through from previous runs\nfor (const s of Object.values(staticData.sessions)) {\n  if (s.currentDraft?.carouselSlides) {\n    s.currentDraft.carouselSlides.forEach(slide => {\n      delete slide.base64;\n      delete slide.imageData;\n      delete slide.svgString;\n    });\n  }\n  delete s.currentDraft?.imageBase64;\n}\n\n// Cap processedUpdates to last 50 entries only\nconst puEntries = Object.entries(staticData.processedUpdates || {});\nif (puEntries.length > 50) {\n  const sorted = puEntries.sort((a, b) => a[1] - b[1]);\n  staticData.processedUpdates = Object.fromEntries(sorted.slice(-50));\n}\n\nconst session = staticData.sessions[chatId] || { state: \"idle\" };\n\n// Fast help / reset commands\nif (/^\\/(start|help)/i.test(text)) {\n  staticData.sessions[chatId] = { state: \"idle\" };\n  return [{\n    json: {\n      action: \"show_help\",\n      chatId,\n      text\n    }\n  }];\n}\n\nif (/^\\/(reset|cancel|clear)/i.test(text)) {\n  staticData.sessions[chatId] = { state: \"idle\" };\n  return [{\n    json: {\n      action: \"reset_session\",\n      chatId\n    }\n  }];\n}\n\n// Case A: User is in \"waiting_feedback\" state -> feedback for current draft\nif (session.state === \"waiting_feedback\" && session.currentDraft) {\n  return [{\n    json: {\n      action: \"apply_tweak_feedback\",\n      chatId,\n      feedbackText: text,\n      isFromVoice,\n      currentDraft: session.currentDraft,\n      format: session.currentDraft.format || \"carousel\"\n    }\n  }];\n}\n\n// Case B: User submitted a new post prompt\n// Comprehensive detection for carousel vs single post (Turkish & English)\nlet detectedFormat = null;\nconst lower = text.toLowerCase();\n\n// Multi-point / list / comparison / multi-page patterns -> Carousel\nconst isCarouselIntent = \n  lower.includes(\"carousel\") || \n  lower.includes(\"kaydırmalı\") || \n  lower.includes(\"kaydirmali\") || \n  lower.includes(\"multi post\") || \n  lower.includes(\"multi-post\") || \n  lower.includes(\"slides\") || \n  lower.includes(\"slide\") || \n  lower.includes(\"slayt\") || \n  lower.includes(\"çoklu sayfa\") ||\n  lower.includes(\"coklu sayfa\") ||\n  lower.includes(\"çoklu post\") ||\n  lower.includes(\"coklu post\") ||\n  lower.includes(\"her sayfa\") ||\n  lower.includes(\"her sayfada\") ||\n  lower.includes(\"karşılaştır\") ||\n  lower.includes(\"karsilastir\") ||\n  lower.includes(\"kıyas\") ||\n  lower.includes(\"kiyas\") ||\n  lower.includes(\"versus\") ||\n  lower.includes(\" vs \") ||\n  lower.includes(\"albüm\") ||\n  lower.includes(\"album\") ||\n  lower.includes(\"seri\") ||\n  /\\b\\d+\\s*(adım|madde|yol|ipucu|taktik|öneri|fark|kural|yöntem|neden|strateji|örnek|kriter|sayfa|tane)\\b/i.test(text) ||\n  /\\b(adımları|yolları|ipuçları|stratejileri|farkları|rehberi|dosyası|manifesto)\\b/i.test(text);\n\nconst isSingleIntent = \n  lower.includes(\"single post\") || \n  lower.includes(\"tek post\") || \n  lower.includes(\"single image\") || \n  lower.includes(\"tek görsel\") || \n  lower.includes(\"tek fotograf\") || \n  lower.includes(\"one post\") ||\n  lower.includes(\"tekli\");\n\nif (isCarouselIntent && !isSingleIntent) {\n  detectedFormat = \"carousel\";\n} else if (isSingleIntent && !isCarouselIntent) {\n  detectedFormat = \"single\";\n}\n\n// If format not specified, ask user to select single vs carousel\nif (!detectedFormat) {\n  session.state = \"waiting_format_choice\";\n  session.pendingTopic = text;\n  session.isFromVoice = isFromVoice;\n  staticData.sessions[chatId] = session;\n\n  return [{\n    json: {\n      action: \"ask_format_choice\",\n      chatId,\n      topic: text,\n      isFromVoice\n    }\n  }];\n}\n\n// Format was detected\nsession.state = \"generating_draft\";\nsession.format = detectedFormat;\nsession.topic = text;\nstaticData.sessions[chatId] = session;\n\nreturn [{\n  json: {\n    action: \"generate_draft\",\n    chatId,\n    topic: text,\n    format: detectedFormat,\n    isFromVoice,\n    feedback: null\n  }\n}];\n"
+      },
+      "id": "evaluate-text-intent",
+      "name": "Evaluate Text Intent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId || '1519369571' }}",
+        "text": "=✨ <b>Social Media Content Studio</b>\n━━━━━━━━━━━━━━━━━━━━\nI received your post idea:\n💡 <i>\"{{ $json.topic }}\"</i>\n\nHow would you like to format this post for Instagram?",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        },
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "🖼️ Single Image Post",
+                    "additionalFields": {
+                      "callback_data": "fmt_single"
+                    }
+                  },
+                  {
+                    "text": "📚 Carousel (3-5 Slides)",
+                    "additionalFields": {
+                      "callback_data": "fmt_carousel"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "❌ Cancel",
+                    "additionalFields": {
+                      "callback_data": "cancel_draft"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "id": "telegram-ask-format",
+      "name": "Telegram: Ask Single vs Carousel",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1960,
+        240
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "9UcTg4aDLdnfs85T",
+          "name": "Codewaft Content Creation Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId || '1519369571' }}",
+        "text": "=👋 <b>Welcome to Social Media Content Studio</b>\n━━━━━━━━━━━━━━━━━━━━\nTransform ideas into publish-ready Instagram posts with AI!\n\n🎙️ <b>Send a Voice Message</b> or 💬 <b>Type any post idea</b>\n<i>e.g. \"Create a post about 3 productivity habits for founders\"</i>\n\n<b>How it works:</b>\n1️⃣ You share an idea (voice or text)\n2️⃣ AI designs an aesthetic theme & copy\n3️⃣ High-res visual is generated\n4️⃣ You review & approve with 1 tap (or request tweaks)\n5️⃣ Direct publish to your Instagram feed! 🚀\n\n<i>Send your first idea now to begin!</i>",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "telegram-show-help",
+      "name": "Telegram: Show Help Guide",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1960,
+        80
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "9UcTg4aDLdnfs85T",
+          "name": "Codewaft Content Creation Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// =========================================================================\n// 🔘 ADVANCED CALLBACK ROUTER & MULTI-TIER SESSION RECOVERY\n// =========================================================================\nconst item = $input.first()?.json || {};\nconst callbackData = String(item.callbackData || \"\");\nconst chatId = String(item.chatId || \"1519369571\");\nconst callbackId = item.callbackId;\n\nconst staticData = $getWorkflowStaticData(\"global\");\nstaticData.sessions = staticData.sessions || {};\nconst session = staticData.sessions[chatId] || { state: \"idle\" };\n\n// 1. Format Selection Callbacks (fmt_single, fmt_carousel)\nif (callbackData === \"fmt_single\" || callbackData === \"fmt_carousel\") {\n  const format = callbackData === \"fmt_single\" ? \"single\" : \"carousel\";\n  const topic = session.pendingTopic || \"Strategic AI & Tech Guide\";\n\n  session.state = \"generating_draft\";\n  session.format = format;\n  session.topic = topic;\n  staticData.sessions[chatId] = session;\n\n  return [{\n    json: {\n      action: \"generate_draft\",\n      callbackId,\n      chatId,\n      topic,\n      format,\n      feedback: null\n    }\n  }];\n}\n\n// 2. User clicked \"Approve & Publish to Instagram\"\nif (callbackData === \"approve_publish\" || callbackData.startsWith(\"approve\")) {\n  let currentDraft = session.currentDraft;\n\n  // Tier 1: Check in-process global variable\n  if (!currentDraft && typeof globalThis !== \"undefined\" && globalThis.__CODEWAFT_DRAFTS) {\n    currentDraft = globalThis.__CODEWAFT_DRAFTS[chatId] || globalThis.__CODEWAFT_LAST_DRAFT;\n  }\n\n  // Tier 2: Check persistent disk backup in /tmp/\n  if (!currentDraft) {\n    // Disk persistence removed for sandbox compliance\n  }\n\n  // Tier 3: Check staticData.lastDraft\n  if (!currentDraft && staticData.lastDraft) {\n    currentDraft = staticData.lastDraft;\n  }\n\n  // Tier 4: Resilient recovery directly from Telegram message text / entities\n  if (!currentDraft) {\n    const rawMsg = String(item.messageText || item.messageCaption || \"\");\n    const entities = Array.isArray(item.messageEntities) ? item.messageEntities : [];\n    \n    // Extract all image URLs from entities and regex\n    const entityUrls = entities.filter(e => e.url && e.url.includes(\"pollinations.ai\")).map(e => e.url);\n    const regexUrls = [...rawMsg.matchAll(/https:\\/\\/gen\\.pollinations\\.ai\\/image\\/[^\\s\"'>]+/g)].map(m => m[0]);\n    const urlMatches = Array.from(new Set([...entityUrls, ...regexUrls]));\n\n    // Extract caption\n    const capMatch = rawMsg.match(/(?:📝\\s*)?(?:Instagram Metni|Instagram Açıklaması|Caption):\\s*\\n+([\\s\\S]*?)(?=\\n\\s*📌|\\n\\s*🏷️|\\n\\s*#|\\n\\s*📚|━━━━━━━━━━━━━━━━━━━━|$)/i);\n    const cap = capMatch ? capMatch[1].trim() : \"Codewaft Paylaşımı\";\n\n    // Extract hashtags\n    const tagMatch = rawMsg.match(/(?:📌|🏷️)\\s*([^\\n]+)/i) || rawMsg.match(/(#[a-zA-Z0-9_]+[\\s\\S]*?)(?=\\n|━━━━━━━━━━━━━━━━━━━━|$)/i);\n    const tags = tagMatch ? tagMatch[1].trim() : \"\";\n\n    if (urlMatches.length >= 2) {\n      currentDraft = {\n        topic: \"Recovered Carousel\",\n        format: \"carousel\",\n        theme: { style: \"The Editorial Field Guide\", categoryTag: \"STRATEGIC GUIDE\" },\n        caption: cap,\n        hashtags: tags,\n        imageUrl: urlMatches[0],\n        carouselSlides: urlMatches.map((url, idx) => ({\n          slide: idx + 1,\n          title: `Slide ${idx + 1}`,\n          imageUrl: url\n        })),\n        iterationCount: 1\n      };\n    } else if (urlMatches.length === 1) {\n      currentDraft = {\n        topic: \"Recovered Single Post\",\n        format: \"single\",\n        theme: { style: \"The Editorial Field Guide\", categoryTag: \"STRATEGIC GUIDE\" },\n        caption: cap,\n        hashtags: tags,\n        imageUrl: urlMatches[0],\n        carouselSlides: [],\n        iterationCount: 1\n      };\n    }\n  }\n\n  if (!currentDraft) {\n    return [{\n      json: {\n        action: \"error_no_draft\",\n        callbackId,\n        chatId,\n        errorMessage: \"No active draft found. Please send a new idea to create a fresh draft!\"\n      }\n    }];\n  }\n\n  return [{\n    json: {\n      action: \"publish_instagram\",\n      callbackId,\n      chatId,\n      draft: currentDraft\n    }\n  }];\n}\n\n// 3. User clicked \"Request Tweaks\"\nif (callbackData === \"tweak_post\" || callbackData.startsWith(\"tweak\")) {\n  session.state = \"waiting_feedback\";\n  staticData.sessions[chatId] = session;\n\n  return [{\n    json: {\n      action: \"prompt_for_tweaks\",\n      callbackId,\n      chatId\n    }\n  }];\n}\n\n// 4. User clicked \"Start from Zero\"\nif (callbackData === \"reset_post\" || callbackData.startsWith(\"reset\")) {\n  staticData.sessions[chatId] = { state: \"idle\" };\n  staticData.lastDraft = null;\n  if (typeof globalThis !== \"undefined\" && globalThis.__CODEWAFT_DRAFTS) delete globalThis.__CODEWAFT_DRAFTS[chatId];\n  // Disk persistence removed for sandbox compliance\n  return [{\n    json: {\n      action: \"start_from_zero\",\n      callbackId,\n      chatId\n    }\n  }];\n}\n\n// 5. User clicked \"Cancel\"\nif (callbackData === \"cancel_draft\" || callbackData.startsWith(\"cancel\")) {\n  staticData.sessions[chatId] = { state: \"idle\" };\n  staticData.lastDraft = null;\n  if (typeof globalThis !== \"undefined\" && globalThis.__CODEWAFT_DRAFTS) delete globalThis.__CODEWAFT_DRAFTS[chatId];\n  // Disk persistence removed for sandbox compliance\n  return [{\n    json: {\n      action: \"cancel_draft\",\n      callbackId,\n      chatId\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    action: \"unknown_callback\",\n    callbackId,\n    chatId\n  }\n}];\n"
+      },
+      "id": "handle-callback-query",
+      "name": "Handle Callback Query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "callback",
+        "operation": "answerQuery",
+        "queryId": "={{ $json.callbackId }}"
+      },
+      "onError": "continueRegularOutput",
+      "id": "telegram-ack-callback",
+      "name": "Telegram: Acknowledge Callback",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1000,
+        560
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "9UcTg4aDLdnfs85T",
+          "name": "Codewaft Content Creation Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "generate_draft",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "publish_instagram",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "prompt_for_tweaks",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "start_from_zero",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "cancel_draft",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "error_no_draft",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        }
+      },
+      "id": "switch-callback-action",
+      "name": "Switch Callback Action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1220,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId || '1519369571' }}",
+        "text": "=🎨 <b>Crafting your content draft...</b>\n━━━━━━━━━━━━━━━━━━━━\n• <b>Topic:</b> <i>{{ $json.topic }}</i>\n• <b>Format:</b> <i>{{ $json.format === 'carousel' ? '📚 Multi-Slide Carousel' : '🖼️ Single Post' }}</i>\n\nAI is currently generating your visual design theme, copywriting, and rendering the high-res graphic. Slides are processed one at a time to keep the server responsive. This may take a few minutes. ⏳",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "telegram-notify-generating",
+      "name": "Telegram: Notify Generating",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1680,
+        560
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "9UcTg4aDLdnfs85T",
+          "name": "Codewaft Content Creation Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "ask_format_choice",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "show_help",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "generate_draft",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "apply_tweak_feedback",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        }
+      },
+      "id": "switch-text-action",
+      "name": "Switch Text Action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1880,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId || '1519369571' }}",
+        "text": "=✍️ <b>Requesting Tweaks & Refinements</b>\n━━━━━━━━━━━━━━━━━━━━\nWhat changes would you like to make to this draft?\n\nSend your feedback as a 💬 <b>text message</b> or 🎙️ <b>voice note</b>!\n\n<i>Ideas:</i>\n• <i>\"Make the background darker and more minimalist\"</i>\n• <i>\"Shorten the caption and add a stronger call to action\"</i>\n• <i>\"Make the colors vibrant neon cyber style\"</i>",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "telegram-prompt-tweaks",
+      "name": "Telegram: Prompt for Tweaks",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1500,
+        640
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "9UcTg4aDLdnfs85T",
+          "name": "Codewaft Content Creation Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId || '1519369571' }}",
+        "text": "=🔄 <b>Starting from Zero!</b>\n━━━━━━━━━━━━━━━━━━━━\nPrevious draft has been reset.\n\nSend a new idea anytime (text or voice note) and we'll craft fresh content! 🚀",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "telegram-start-zero-msg",
+      "name": "Telegram: Start Fresh Notice",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1500,
+        780
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "9UcTg4aDLdnfs85T",
+          "name": "Codewaft Content Creation Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId || '1519369571' }}",
+        "text": "=❌ <b>Draft Discarded</b>\n━━━━━━━━━━━━━━━━━━━━\nYour draft was canceled. Whenever you are ready for a new post, just send a message!",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "telegram-cancel-draft-msg",
+      "name": "Telegram: Cancel Draft Notice",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1500,
+        920
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "9UcTg4aDLdnfs85T",
+          "name": "Codewaft Content Creation Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// =========================================================================\n// 🎨 PREPARE AI PROMPT (ENGLISH PROMPT ENGINE & FLUX FIDELITY SPECIALIST)\n// =========================================================================\n// Telegram sendMessage returns a message receipt, not the original topic.\n// Recover generation context from the branch that ran in this execution.\nlet input = $input.first()?.json || {};\nif (!input.topic && !input.feedbackText && !input.currentDraft) {\n  for (const nodeName of [\"Evaluate Text Intent\", \"Handle Callback Query\"]) {\n    try {\n      const source = $(nodeName).first()?.json;\n      if (source && (source.topic || source.feedbackText || source.currentDraft)) {\n        input = source;\n        break;\n      }\n    } catch (_) { /* The other branch did not execute. */ }\n  }\n}\nconst chatId = String(input.chatId || \"1519369571\");\nlet topic = String(input.topic || input.feedbackText || \"\").trim();\nlet format = input.format || \"carousel\";\n\nif (!topic && input.currentDraft) {\n  topic = input.currentDraft.topic;\n  format = input.currentDraft?.format || \"carousel\";\n}\n\nconst feedback = input.feedbackText || null;\nconst currentDraft = input.currentDraft || null;\n\n// Determine target slide count based on user topic (e.g. 3 pages / 5 tips)\nlet targetSlideCount = format === \"carousel\" ? 3 : 1;\nconst numMatch = topic.match(/\\b(\\d+)\\s*(adım|madde|yol|ipucu|taktik|öneri|fark|kural|yöntem|neden|strateji|örnek|kriter|sayfa|tane|page|slide|point|step|tip|way)\\b/i);\nif (format === \"carousel\" && numMatch) {\n  const n = parseInt(numMatch[1], 10);\n  if (n >= 2 && n <= 7) targetSlideCount = n;\n}\n\nconst systemLines = [\n  \"You are an elite Senior Social Media Copywriter, Editorial Publication Designer, and Quality Assurance Proofreader for @developmentserhat.\",\n  \"Your mission is to produce world-class, intellectually stimulating, grammatically flawless, and visually impeccable Instagram publications in ENGLISH.\",\n  \"\",\n  \"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\",\n  \"🌍 MANDATORY ENGLISH LANGUAGE DIRECTIVE:\",\n  \"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\",\n  \"1. CRITICAL: EVEN IF THE USER INPUT OR TOPIC IS GIVEN IN TURKISH OR ANY OTHER LANGUAGE, YOU MUST COMPOSE AND OUTPUT 100% OF THE CONTENT IN ENGLISH:\",\n  \"   - All visual text on graphics (Category Eyebrows, Main Headlines, Takeaway Cards) MUST BE IN ENGLISH.\",\n  \"   - All AI visual generation prompts (slidePrompt, imagePrompt) MUST BE IN DETAILED, HIGH-FIDELITY ENGLISH for Flux 1 Schnell.\",\n  \"   - The entire Instagram caption, key takeaways, calls-to-action, and hashtags MUST BE IN ENGLISH.\",\n  \"   - All theme and design descriptions MUST BE IN ENGLISH.\",\n  \"2. WHY THIS MATTERS FOR IMAGE GENERATION:\",\n  \"   - AI image generation models (Flux 1 Schnell) achieve maximum fidelity, razor-sharp typography, and zero character-garbling when generating English letters.\",\n  \"\",\n  \"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\",\n  \"🛡️ MANDATORY QUALITY ASSURANCE & TEXT ACCURACY DIRECTIVES:\",\n  \"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\",\n  \"1. TEXT FIDELITY ON GRAPHIC IMAGES:\",\n  \"   - Keep all visual text on the graphic cards SHORT, PUNCHY, and CAPITALIZED:\",\n  \"     • Category Eyebrows: Exactly 1 to 2 words in uppercase (e.g. 'AI COMPARISON', 'BENCHMARK', 'KEY VERDICT').\",\n  \"     • Main Headline on Graphic: Exactly 3 to 5 words maximum in double quotes (e.g. 'CLAUDE VS GEMINI VS GPT').\",\n  \"     • Takeaway Cards on Graphic: Exactly 2 to 4 words per card title (e.g. '01 · REASONING & CODING', '02 · CONTEXT & SPEED').\",\n  \"     • NEVER place full paragraphs, long sentences, or dense body text on the graphic image!\",\n  \"\",\n  \"2. DIVISION OF RESPONSIBILITY (GRAPHIC vs CAPTION):\",\n  \"   - THE GRAPHIC is an architectural poster: striking hook headline, clean Swiss cards, page number, @developmentserhat branding.\",\n  \"   - THE INSTAGRAM CAPTION is where the deep, comprehensive, detailed value lives (rendered natively by Instagram with perfect typography).\",\n  \"\",\n  \"3. CAPTION QUALITY & EDITORIAL RIGOR (IN ENGLISH):\",\n  \"   - Hook: Arresting, scroll-stopping first sentence with an intriguing contrast or quote.\",\n  \"   - Problem / Context: Mature analysis explaining the landscape, trade-offs, and practical reality.\",\n  \"   - Solution Framework: Numbered pillars with emojis ('01 · ...', '02 · ...') comparing models/points objectively.\",\n  \"   - Call To Action: Clear directive ('👉 Save this guide for your next build. Follow @developmentserhat for more AI engineering insights.').\",\n  \"   - Hashtags: 12-15 curated English tech & strategy hashtags separated by spaces.\",\n  \"\",\n  \"4. FLUX PROMPT SPECIFICATION (FOR MAXIMUM RESOLUTION & FIDELITY):\",\n  \"   - Format: Square 1:1, 1080x1080 native Instagram resolution.\",\n  \"   - Background: Warm textured fine-art paper or architectural ivory parchment (#fafaf7), hairline borders (#e4e7e0).\",\n  \"   - Ink Palette: Deep midnight pine / anthracite ink (#14251b), muted eucalyptus sage (#5b7562), subtle terracotta (#9e473b).\",\n  \"   - Mandatory prompt rule: Every slidePrompt must include:\",\n  \"     'Text fidelity rule: All text inside quotes must be rendered with razor-sharp Swiss typography, perfectly spelled, high contrast dark pine lettering (#14251b) on pristine warm ivory paper (#fafaf7), zero gibberish, zero misspelled letters.'\",\n  \"\",\n  \"CAROUSEL STRUCTURE: Follow the user's requested page allocation. For one subject per page (for example Claude, Gemini, GPT), use one content slide per subject, including concise strengths, limitations, and use cases. Do not replace subject pages with a cover or CTA. The example slide roles below are illustrative, not mandatory.\",\n  \"Return strictly valid JSON matching the schema.\"\n];\n\nconst systemInstruction = systemLines.join(\"\\n\");\n\nlet userPrompt = \"Topic / Idea: \\\"\" + topic + \"\\\"\\nPost Format: \" + (format === \"carousel\" ? (\"Multi-Page Editorial Carousel (\" + targetSlideCount + \" Slides)\") : \"Single Editorial Card (1 High-Impact Graphic)\") + \"\\n\";\n\nif (feedback && currentDraft) {\n  userPrompt += \"\\nPREVIOUS DRAFT CONTEXT:\\n- Caption: \" + (currentDraft.caption || \"\") + \"\\n- Theme: \" + (currentDraft.theme?.style || \"\") + \"\\n\\nUSER FEEDBACK:\\n\\\"\" + feedback + \"\\\"\\nApply feedback precisely to elevate copy and visual aesthetic in English.\\n\";\n} else {\n  userPrompt += \"\\nTranslate this concept into an exceptional, highly informative English publication for @developmentserhat with exactly \" + targetSlideCount + \" slides.\\n\";\n}\n\nuserPrompt += \"\\nREQUIRED JSON OUTPUT SCHEMA (ALL VALUES IN ENGLISH):\\n\" + JSON.stringify({\n  theme: {\n    style: \"The Editorial Field Guide (Formal, Minimalist & Sophisticated)\",\n    colorPalette: \"Warm ivory #fafaf7, deep pine #14251b, eucalyptus sage #5b7562, terracotta #9e473b\",\n    mood: \"Calm, prestigious, authoritative, trustworthy\",\n    categoryTag: \"STRATEGIC GUIDE\"\n  },\n  caption: \"Full Instagram caption in English with strong hook, structured comparison bullet points with emojis, and CTA\",\n  hashtags: \"#codewaft #artificialintelligence #claude #chatgpt #gemini #techanalysis #buildinpublic #innovation #productivity #techtrends\",\n  imagePrompt: \"Detailed English Flux prompt for Slide 1 (Cover) specifying square 1:1 editorial publication card on warm ivory paper (#fafaf7), hairline border (#e4e7e0), uppercase category badge 'AI COMPARISON', prominent bold headline in quotes (3-5 words), candid editorial photo, brand handle '@developmentserhat', page indicator '01 / \" + targetSlideCount + \"'\",\n  carouselSlides: [\n    {\n      slide: 1,\n      type: \"cover\",\n      categoryTag: \"AI COMPARISON\",\n      title: \"Short 3-5 Word Headline in English\",\n      subtitle: \"Compelling subtitle in English\",\n      cards: [\"Cover photo visual description\"],\n      slidePrompt: \"Square 1:1 high-end editorial publication cover on warm ivory paper (#fafaf7), hairline border (#e4e7e0). Eyebrow: 'AI COMPARISON'. Prominent bold headline: 'CLAUDE VS GEMINI VS GPT'. Candid architectural editorial photograph of modern tech laboratory and sleek workstations. Bottom: brand handle '@developmentserhat' and page indicator '01 / \" + targetSlideCount + \"'. Swiss typography, high resolution 8k. Text fidelity rule: All text inside quotes must be rendered with razor-sharp Swiss typography, perfectly spelled, zero gibberish.\"\n    },\n    {\n      slide: 2,\n      type: \"content\",\n      categoryTag: \"MODEL 01\",\n      title: \"Slide 2 Headline in English\",\n      subtitle: \"Key takeaway in English\",\n      cards: [\n        \"01 · CORE STRENGTHS\",\n        \"02 · BEST USE CASES\"\n      ],\n      slidePrompt: \"Square 1:1 editorial publication spread on warm textured paper (#fafaf7) with hairline border (#e4e7e0). Tracked uppercase eyebrow 'MODEL 01', bold serif headline in quotes. 2 structured white informative cards with crisp dark pine text (#14251b): '01 · CORE STRENGTHS', '02 · BEST USE CASES'. Bottom: brand handle '@developmentserhat' and page indicator '02 / \" + targetSlideCount + \"'. Swiss typography, ultra clean 8k. Text fidelity rule: All text inside quotes must be rendered with razor-sharp Swiss typography, perfectly spelled, zero typos.\"\n    },\n    {\n      slide: 3,\n      type: \"cta\",\n      categoryTag: \"FINAL VERDICT\",\n      title: \"Summary Headline in English\",\n      subtitle: \"Action Call in English\",\n      cards: [\n        \"01 · SAVE FOR REFERENCE\",\n        \"02 · FOLLOW @CODEWAFT\"\n      ],\n      slidePrompt: \"Square 1:1 editorial CTA slide on warm ivory paper (#fafaf7) with hairline border (#e4e7e0). Tracked uppercase eyebrow 'FINAL VERDICT', authoritative bold headline 'WHICH ONE TO CHOOSE'. 2 structured white cards with dark pine text. Bottom: official insignia with text '@developmentserhat', page indicator '03 / \" + targetSlideCount + \"'. 8k. Text fidelity rule: All text inside quotes must be rendered with razor-sharp Swiss typography, perfectly spelled, zero typos.\"\n    }\n  ]\n}, null, 2);\n\nreturn [{\n  json: {\n    chatId,\n    topic,\n    format,\n    targetSlideCount,\n    feedback,\n    currentDraft,\n    systemInstruction,\n    userPrompt\n  }\n}];"
+      },
+      "id": "prepare-ai-prompt",
+      "name": "Prepare AI Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"systemInstruction\": {\n    \"parts\": [\n      {\n        \"text\": {{ JSON.stringify($json.systemInstruction) }}\n      }\n    ]\n  },\n  \"contents\": [\n    {\n      \"parts\": [\n        {\n          \"text\": {{ JSON.stringify($json.userPrompt) }}\n        }\n      ]\n    }\n  ],\n  \"generationConfig\": {\n    \"temperature\": 0.7,\n    \"topP\": 0.95,\n    \"topK\": 40,\n    \"maxOutputTokens\": 4096,\n    \"responseMimeType\": \"application/json\"\n  }\n}",
+        "options": {}
+      },
+      "id": "gemini-creative-director",
+      "name": "Gemini 3.5: Creative Director",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2380,
+        480
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "zvLpU1ScjMCeOYQq",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// =========================================================================\n// 🛡️ VERIFY AI RESPONSE & TOKEN LIMIT GUARD (NO SILENT FAILS)\n// =========================================================================\nconst resp = $input.first()?.json || {};\nconst promptMeta = $('Prepare AI Prompt').first().json;\nconst chatId = promptMeta.chatId;\n\n// Check finish reason & token exhaustion\nconst candidate = resp.candidates?.[0];\nif (!candidate) {\n  const errMsg = resp.error?.message || 'Empty response from Gemini API. Quota may be exceeded or request was blocked.';\n  throw new Error(`Gemini API Error: ${errMsg}`);\n}\n\nif (candidate.finishReason === 'MAX_TOKENS') {\n  throw new Error('AI Generation halted: Model token limit reached. Please simplify your prompt.');\n}\n\nif (candidate.finishReason === 'SAFETY' || candidate.finishReason === 'RECITATION') {\n  throw new Error(`AI Generation blocked due to safety/content filter (${candidate.finishReason}).`);\n}\n\nconst rawText = candidate.content?.parts?.[0]?.text?.trim() || '';\nlet text = rawText.trim();\nif (text.startsWith('```json')) text = text.slice(7);\nif (text.startsWith('```')) text = text.slice(3);\nif (text.endsWith('```')) text = text.slice(0, -3);\ntext = text.trim();\n\nlet parsed;\ntry {\n  parsed = JSON.parse(text);\n} catch (err1) {\n  try {\n    const fixedWhitespace = text.replace(/[\\n\\r\\t]/g, (m) => m === '\\t' ? ' ' : '\\\\n');\n    parsed = JSON.parse(fixedWhitespace);\n  } catch (err2) {\n    try {\n      const extractField = (key) => {\n        const regex = new RegExp(`\"${key}\"\\\\s*:\\\\s*\"([\\\\s\\\\S]*?)\"(?=\\\\s*,\\\\s*\"|\\\\s*})`, 'i');\n        const match = text.match(regex);\n        return match ? match[1].replace(/\\\\\"/g, '\"').replace(/\\\\n/g, '\\n') : '';\n      };\n\n      const themeMatch = text.match(/\"theme\"\\\\s*:\\\\s*\\{([\\\\s\\\\S]*?)\\}/i);\n      let theme = { style: 'Modern Minimalist', colorPalette: '#111, #fff', mood: 'Professional' };\n      if (themeMatch) {\n        try {\n          theme = JSON.parse(`{${themeMatch[1]}}`);\n        } catch (_) {\n          theme = {\n            style: extractField('style') || 'Modern Minimalist',\n            colorPalette: extractField('colorPalette') || 'Clean contrast',\n            mood: extractField('mood') || 'Inspiring'\n          };\n        }\n      }\n\n      parsed = {\n        theme,\n        caption: extractField('caption') || 'Exciting update from our team! 🚀',\n        hashtags: extractField('hashtags') || '#tech #innovation',\n        imagePrompt: extractField('imagePrompt') || promptMeta.topic\n      };\n    } catch (err3) {\n      throw new Error(`Failed to parse AI output as JSON: ${err1.message}`);\n    }\n  }\n}\n\nif (!parsed.theme || !parsed.caption || !parsed.imagePrompt) {\n  throw new Error('AI returned an incomplete content structure. Re-generating...');\n}\n\nreturn [{\n  json: {\n    chatId,\n    topic: promptMeta.topic,\n    format: promptMeta.format,\n    theme: parsed.theme,\n    caption: parsed.caption,\n    hashtags: parsed.hashtags || '',\n    imagePrompt: parsed.imagePrompt,\n    carouselSlides: parsed.carouselSlides || [],\n    iterationCount: (promptMeta.currentDraft?.iterationCount || 0) + 1\n  }\n}];"
+      },
+      "id": "verify-ai-output",
+      "name": "Verify AI Output & Token Guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2600,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// =========================================================================\n// 📦 PREPARE SLIDE TEXT ONLY (NO IMAGE BYTES OR HTTP REQUESTS)\n// =========================================================================\nconst draftMeta = $(\"Verify AI Output & Token Guard\").first()?.json || {};\nconst promptMeta = $(\"Prepare AI Prompt\").first()?.json || {};\n\nlet rawChatId = draftMeta.chatId || promptMeta.chatId;\nif (!rawChatId || rawChatId === \"undefined\" || rawChatId === \"null\") {\n  try { rawChatId = $(\"Route & Parse Event\").first()?.json?.chatId; } catch(e) {}\n}\nif (!rawChatId || rawChatId === \"undefined\" || rawChatId === \"null\") {\n  rawChatId = \"1519369571\";\n}\nconst chatId = String(rawChatId);\n\n// Clean legacy bloat\nconst staticData = $getWorkflowStaticData(\"global\");\nif (staticData.__images) delete staticData.__images;\nif (staticData.images) delete staticData.images;\n\n// Build clean slides array\nconst rawSlides = Array.isArray(draftMeta.carouselSlides) && draftMeta.carouselSlides.length ? draftMeta.carouselSlides : [];\nif (draftMeta.format === \"carousel\" && (rawSlides.length < 2 || rawSlides.length > 7)) {\n  throw new Error(\"Carousel must contain 2–7 slides. No images were generated.\");\n}\nconst totalSlides = draftMeta.format === \"carousel\" ? rawSlides.length : 1;\n\n// Text accuracy assurance suffix for Flux\nconst TEXT_FIDELITY_DIRECTIVE = \"Text fidelity rule: All text inside quotes must be rendered with razor-sharp Swiss typography, perfectly spelled, high contrast dark pine lettering (#14251b) on pristine warm ivory paper (#fafaf7), zero gibberish, zero misspelled letters, 8k resolution.\";\n\nconst rawSlideDefs = [];\nif (draftMeta.format === \"carousel\" && rawSlides.length >= 2) {\n  rawSlides.forEach((s, idx) => {\n    const slideNum = idx + 1;\n    const slideTitle = String(s.title || (\"Slide \" + slideNum)).replace(/[\\r\\n]+/g, \" \").trim();\n    const slideCategory = s.categoryTag || (slideNum === 1 ? (draftMeta.theme?.categoryTag || \"STRATEGIC GUIDE\") : (\"POINT 0\" + (slideNum - 1)));\n    \n    // Sanitize card text: keep it short and punchy so Flux renders letters without garbling\n    let cardsText = \"\";\n    if (Array.isArray(s.cards) && s.cards.length) {\n      const sanitizedCards = s.cards.slice(0, 2).map((c, cIdx) => {\n        const cleanCard = String(c).replace(/^0\\d\\s*·\\s*/, \"\").substring(0, 30).trim();\n        return \"0\" + (cIdx + 1) + \" · \" + cleanCard.toUpperCase();\n      });\n      cardsText = \" Structured white cards: \" + sanitizedCards.map(card => JSON.stringify(card)).join(\", \") + \".\";\n    }\n\n    let prompt = s.slidePrompt || (\"Square 1:1 editorial publication card on warm ivory paper (#fafaf7), hairline border (#e4e7e0). Eyebrow: \\\"\" + slideCategory + \"\\\". Headline: \\\"\" + slideTitle + \"\\\".\" + cardsText + \" Bottom: @developmentserhat, page indicator 0\" + slideNum + \" / 0\" + totalSlides + \". Swiss typography.\");\n    if (!prompt.includes(\"Text fidelity rule\")) {\n      prompt += \" \" + TEXT_FIDELITY_DIRECTIVE;\n    }\n\n    rawSlideDefs.push({\n      slide: slideNum,\n      type: s.type || (slideNum === 1 ? \"cover\" : \"content\"),\n      categoryTag: slideCategory,\n      title: slideTitle,\n      cards: s.cards || [],\n      prompt\n    });\n  });\n} else {\n  // Single post\n  let prompt = draftMeta.imagePrompt || (\"Square 1:1 editorial publication card on warm ivory paper (#fafaf7), hairline border (#e4e7e0). Eyebrow: \\\"STRATEGIC GUIDE\\\". Headline: \\\"\" + draftMeta.topic + \"\\\". Bottom: @developmentserhat.\");\n  if (!prompt.includes(\"Text fidelity rule\")) {\n    prompt += \" \" + TEXT_FIDELITY_DIRECTIVE;\n  }\n  rawSlideDefs.push({\n    slide: 1,\n    type: \"single\",\n    categoryTag: draftMeta.theme?.categoryTag || \"STRATEGIC GUIDE\",\n    title: draftMeta.topic,\n    cards: [],\n    prompt\n  });\n}\n\n\nreturn rawSlideDefs.map(s => {\n  if (typeof s.prompt !== \"string\" || !s.prompt.trim() || s.prompt.length > 2048) {\n    throw new Error(\"Slide \" + s.slide + \" image prompt must contain 1–2048 characters.\");\n  }\n  return { json: s };\n});\n"
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 46000,
+      "id": "imagen-3-generate-visual",
+      "name": "Prepare Slide Definitions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2820,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "sendPhoto",
+        "chatId": "={{ $json.chatId || '1519369571' }}",
+        "additionalFields": {
+          "caption": "={{ $json.slideCaption }}",
+          "parse_mode": "HTML"
+        },
+        "file": "={{ $json.imageUrl }}",
+        "binaryData": false
+      },
+      "id": "prepare-draft-binary",
+      "name": "Telegram: Send Carousel Slides",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3040,
+        480
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "9UcTg4aDLdnfs85T",
+          "name": "Codewaft Content Creation Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId || '1519369571' }}",
+        "text": "={{ $json.cardText }}",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        },
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ '🚀 Approve & Publish to Instagram (' + ($json.totalSlides > 1 ? ($json.totalSlides + ' Slides') : 'Single Post') + ')' }}",
+                    "additionalFields": {
+                      "callback_data": "approve_publish"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "✍️ Request Tweaks",
+                    "additionalFields": {
+                      "callback_data": "tweak_post"
+                    }
+                  },
+                  {
+                    "text": "🔄 Start Fresh",
+                    "additionalFields": {
+                      "callback_data": "reset_post"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "❌ Cancel",
+                    "additionalFields": {
+                      "callback_data": "cancel_draft"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "id": "telegram-send-draft-card",
+      "name": "Telegram: Send Draft & Approval Buttons",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3480,
+        480
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "9UcTg4aDLdnfs85T",
+          "name": "Codewaft Content Creation Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId || '1519369571' }}",
+        "text": "=🚀 <b>Publishing to Instagram...</b>\n━━━━━━━━━━━━━━━━━━━━\nUploading your high-res visual and publishing to your feed. You'll get a confirmation in just a moment! ⏳",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "telegram-notify-publishing",
+      "name": "Telegram: Notify Publishing",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1500,
+        500
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "9UcTg4aDLdnfs85T",
+          "name": "Codewaft Content Creation Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId || '1519369571' }}",
+        "text": "=🎉 <b>POST SUCCESSFULLY PUBLISHED TO INSTAGRAM!</b>\n━━━━━━━━━━━━━━━━━━━━\n{{ $json.isCarousel ? ('📚 <b>' + $json.slideCount + '-Slide Carousel Album</b>') : '🖼️ <b>Single Editorial Publication</b>' }} has been successfully published live to your <b>@developmentserhat</b> feed! 🚀\n\n🆔 <b>Media ID:</b> <code>{{ $json.mediaId }}</code>\n🔗 <b>Instagram Profile:</b> <a href=\"https://www.instagram.com/developmentserhat/\">instagram.com/developmentserhat</a>\n⏰ <b>Published At:</b> <code>{{ $json.publishedAt }}</code>\n\nSend a new voice note or text anytime to craft your next post! ✨",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "telegram-notify-published-success",
+      "name": "Telegram: Published Success Notice",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2240,
+        500
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "9UcTg4aDLdnfs85T",
+          "name": "Codewaft Content Creation Bot"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "error-trigger",
+      "name": "Global Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        80,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "chatId",
+              "name": "chatId",
+              "value": "1519369571",
+              "type": "string"
+            },
+            {
+              "id": "alertMessage",
+              "name": "alertMessage",
+              "value": "=⚠️ <b>Social Media Content Studio Alert</b>\n━━━━━━━━━━━━━━━━━━━━\nSomething went wrong while processing your request:\n\n❌ <b>Error:</b> <code>{{ $json.execution?.error?.message || 'Workflow execution issue' }}</code>\n📍 <b>Failed Node:</b> <code>{{ $json.execution?.lastNodeExecuted || 'Workflow Engine' }}</code>\n\n💡 <b>Next Step:</b> Please send your idea again to start a clean session.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "format-error-alert",
+      "name": "Format Error Alert",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        300,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId || '1519369571' }}",
+        "text": "={{ $json.alertMessage }}",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "telegram-send-error-alert",
+      "name": "Telegram: Send Error Alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        520,
+        800
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "9UcTg4aDLdnfs85T",
+          "name": "Codewaft Content Creation Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId || '1519369571' }}",
+        "text": "=⚠️ <b>No Active Draft Found</b>\n━━━━━━━━━━━━━━━━━━━━\nYour draft session was cleared because the workflow was reloaded or updated.\n\n💡 <b>What to do:</b> Send your post idea again now to generate a fresh draft!",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "telegram-error-no-draft-msg",
+      "name": "Telegram: Error No Draft Notice",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1500,
+        1100
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "9UcTg4aDLdnfs85T",
+          "name": "Codewaft Content Creation Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// =========================================================================\n// 🚀 INSTAGRAM PUBLISH ENGINE (SINGLE POST OR MULTI-PAGE CAROUSEL)\n// =========================================================================\nconst meta = $(\"Handle Callback Query\").first().json;\nconst draft = meta.draft;\nconst chatId = String(meta.chatId);\nconst igUserId = \"17841480124544403\";\nconst token = \"YOUR_INSTAGRAM_GRAPH_API_TOKEN\";\nif (!token || token === \"YOUR_INSTAGRAM_ACCESS_TOKEN\") throw new Error(\"Set the Instagram access token in this node before publishing.\");\nconst caption = draft.caption + (draft.hashtags ? \"\\n\\n\" + draft.hashtags : \"\");\n\n// Resilient Meta API caller with auto-retries & detailed diagnostics\nconst postMeta = async (endpoint, bodyObj) => {\n  const url = \"https://graph.facebook.com/v19.0/\" + igUserId + \"/\" + endpoint;\n  let lastErr = null;\n  for (let attempt = 1; attempt <= 3; attempt++) {\n    try {\n      return await this.helpers.httpRequest({\n        method: \"POST\",\n        url,\n        headers: {\n          \"Content-Type\": \"application/json\"\n        },\n        body: bodyObj,\n        json: true\n      });\n    } catch (err) {\n      lastErr = err;\n      if (attempt < 3) {\n        await new Promise(r => setTimeout(r, 2000 * attempt));\n      }\n    }\n  }\n  const detail = lastErr.response?.data?.error?.error_user_msg || lastErr.response?.data?.error?.message || lastErr.message || JSON.stringify(lastErr);\n  throw new Error(\"Meta API Error (\" + endpoint + \"): \" + detail);\n};\n\nconst pollStatus = async (containerId) => {\n  const url = \"https://graph.facebook.com/v19.0/\" + containerId + \"?fields=status_code,status&access_token=\" + token;\n  // Poll up to 20 times with 3s interval = 60s max wait per container\n  for (let i = 0; i < 20; i++) {\n    await new Promise(r => setTimeout(r, 3000));\n    try {\n      const data = await this.helpers.httpRequest({ method: \"GET\", url, json: true });\n      console.log(\"[POLL] \" + containerId + \" → \" + data?.status_code);\n      if (data?.status_code === \"FINISHED\") return true;\n      if (data?.status_code === \"ERROR\" || data?.status_code === \"EXPIRED\") {\n        throw new Error(\"Media container failed [\" + data.status_code + \"]: \" + (data.status || JSON.stringify(data)));\n      }\n    } catch (e) {\n      if (e.message.startsWith(\"Media container failed\")) throw e;\n      // Network blip – continue polling\n    }\n  }\n  throw new Error(\"Media container did not finish processing within 60 seconds (container: \" + containerId + \")\");\n};\n\nconst preWarmUrl = async (url) => {\n  try {\n    await this.helpers.httpRequest({ method: \"HEAD\", url, timeout: 15000 });\n  } catch (e) {}\n};\n\nlet publishedMediaId = null;\nlet isCarousel = false;\nlet slideCount = 1;\n\nif (draft.format === \"carousel\" && Array.isArray(draft.carouselSlides) && draft.carouselSlides.length >= 2) {\n  isCarousel = true;\n  slideCount = draft.carouselSlides.length;\n\n  // Step 1: Pre-warm all slide images sequentially (allow CDN to settle)\n  for (const s of draft.carouselSlides) {\n    await preWarmUrl(s.imageUrl);\n    console.log(\"[IG] Pre-warmed slide \" + s.slide + \": \" + s.imageUrl.substring(0, 60));\n    await new Promise(r => setTimeout(r, 800)); // small pause between pre-warms\n  }\n\n  // Step 2: Create each carousel slide item container sequentially with status polling\n  const itemIds = [];\n  for (const slide of draft.carouselSlides) {\n    console.log(\"[IG] Creating container for slide \" + slide.slide + \" → \" + slide.imageUrl.substring(0, 60));\n    const itemRes = await postMeta(\"media\", {\n      image_url: slide.imageUrl,\n      is_carousel_item: true,\n      access_token: token\n    });\n    if (!itemRes.id) {\n      const detail = JSON.stringify(itemRes);\n      throw new Error(\"Failed to create carousel item for slide \" + slide.slide + \" (\" + slide.title + \"): \" + detail + \" | URL: \" + slide.imageUrl);\n    }\n    console.log(\"[IG] Item container created: \" + itemRes.id + \" for slide \" + slide.slide);\n\n    // Poll each item until FINISHED before creating next one (Instagram requirement)\n    await pollStatus(itemRes.id);\n    itemIds.push(itemRes.id);\n    await new Promise(r => setTimeout(r, 500)); // small pause between items\n  }\n\n  // Step 3: Create the parent carousel container\n  console.log(\"[IG] Creating parent carousel with children: \" + itemIds.join(\",\"));\n  const parentRes = await postMeta(\"media\", {\n    media_type: \"CAROUSEL\",\n    children: itemIds.join(\",\"),\n    caption,\n    access_token: token\n  });\n  if (!parentRes.id) {\n    throw new Error(\"Failed to create parent carousel container: \" + JSON.stringify(parentRes));\n  }\n  const creationId = parentRes.id;\n  console.log(\"[IG] Parent carousel container: \" + creationId);\n\n  // Step 4: Poll parent carousel status until FINISHED\n  await pollStatus(creationId);\n\n  // Step 5: Publish live to Instagram feed\n  const pubRes = await postMeta(\"media_publish\", {\n    creation_id: creationId,\n    access_token: token\n  });\n  if (!pubRes.id) {\n    throw new Error(\"Failed to publish carousel container: \" + JSON.stringify(pubRes));\n  }\n  publishedMediaId = pubRes.id;\n  console.log(\"[IG] ✅ Published carousel! Media ID: \" + publishedMediaId);\n} else {\n  // Single image post\n  await preWarmUrl(draft.imageUrl);\n\n  const createRes = await postMeta(\"media\", {\n    image_url: draft.imageUrl,\n    caption,\n    access_token: token\n  });\n  if (!createRes.id) throw new Error(\"Failed to create media container: \" + JSON.stringify(createRes));\n  const creationId = createRes.id;\n\n  await pollStatus(creationId);\n\n  const pubRes = await postMeta(\"media_publish\", {\n    creation_id: creationId,\n    access_token: token\n  });\n  if (!pubRes.id) throw new Error(\"Failed to publish media container: \" + JSON.stringify(pubRes));\n  publishedMediaId = pubRes.id;\n}\n\n// Reset session and clear published images after successful publication\nconst staticData = $getWorkflowStaticData(\"global\");\nstaticData.sessions = staticData.sessions || {};\nstaticData.sessions[chatId] = { state: \"idle\" };\nstaticData.lastDraft = null;\n// Clean up images used in this publish (free up staticData space)\nif (staticData.__images) {\n  Object.keys(staticData.__images)\n    .filter(k => k.includes(\"_\" + chatId + \"_\"))\n    .forEach(k => delete staticData.__images[k]);\n}\n\nreturn [{\n  json: {\n    chatId,\n    mediaId: publishedMediaId || \"N/A\",\n    isCarousel,\n    slideCount,\n    permalink: \"https://www.instagram.com/developmentserhat/\",\n    publishedAt: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "instagram-publish-engine",
+      "name": "Instagram: Publish Live (Single or Carousel)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1940,
+        500
+      ]
+    },
+    {
+      "id": "prepare-approval-card",
+      "name": "Prepare Approval Card",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3260,
+        480
+      ],
+      "parameters": {
+        "jsCode": "// Combine slide results and pass single review card item\nconst firstItem = $('Finalize Draft from Image URLs').first()?.json || {};\nconst promptMeta = $('Prepare AI Prompt').first()?.json || {};\n\nlet rawChatId = firstItem.chatId || promptMeta.chatId;\nif (!rawChatId || rawChatId === \"undefined\" || rawChatId === \"null\") {\n  try { rawChatId = $('Route & Parse Event').first()?.json?.chatId; } catch(e) {}\n}\nif (!rawChatId || rawChatId === \"undefined\" || rawChatId === \"null\") {\n  rawChatId = \"1519369571\";\n}\n\nreturn [{\n  json: {\n    chatId: String(rawChatId),\n    cardText: firstItem.summaryCard || \"✨ Your draft is ready!\",\n    totalSlides: firstItem.totalSlides || 1\n  }\n}];\n"
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "post-image",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wh-serve-img-1",
+      "name": "Webhook: Serve Studio Image",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        -180
+      ],
+      "webhookId": "wh-serve-img-1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// =========================================================================\n// 🖼️ LOOKUP IMAGE BINARY – reads from staticData.__images (task-runner safe)\n// =========================================================================\nconst query = $input.first()?.json?.query || {};\nconst id = String(query.id || \"\");\n\n// staticData is accessible from ANY code node in the same workflow run context\nconst staticData = $getWorkflowStaticData(\"global\");\nlet b64 = null;\n\nif (staticData.__images) {\n  // Direct key lookup first\n  b64 = staticData.__images[id] || null;\n  \n  // Fallback: try matching by slide number suffix (e.g. \"cw_123_s1_...\" → key contains \"s1\")\n  if (!b64 && id) {\n    const keys = Object.keys(staticData.__images);\n    // Sort newest first\n    const sorted = keys.sort((a, b) => {\n      const tsA = parseInt(a.split(\"_\").pop()) || 0;\n      const tsB = parseInt(b.split(\"_\").pop()) || 0;\n      return tsB - tsA;\n    });\n    // Try to find a key that matches the slide id\n    const match = sorted.find(k => k === id || k.startsWith(id) || id.startsWith(k));\n    if (match) b64 = staticData.__images[match];\n  }\n}\n\n// Fallback: 8x8 light gray JPEG (visible failure indicator)\nconst FALLBACK_JPEG_B64 = \"/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=\";\n\nconst data = b64 || FALLBACK_JPEG_B64;\n\nreturn [{\n  json: { id, found: Boolean(b64), cacheSize: Object.keys(staticData.__images || {}).length },\n  binary: {\n    data: {\n      data,\n      mimeType: \"image/jpeg\",\n      fileName: (id || \"image\") + \".jpg\"\n    }\n  }\n}];\n"
+      },
+      "id": "code-lookup-img-1",
+      "name": "Lookup Image Binary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        -180
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "binary",
+        "responseDataSource": "binaryPromise",
+        "dataPropertyName": "data",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "image/jpeg"
+              },
+              {
+                "name": "Cache-Control",
+                "value": "public, max-age=86400"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-wh-img-1",
+      "name": "Respond to Webhook: Image",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        680,
+        -180
+      ]
+    },
+    {
+      "parameters": {
+        "source": "parameter",
+        "workflowJson": "{\"name\":\"Studio: Render One Slide (native disk pipeline)\",\"nodes\":[{\"parameters\":{\"inputSource\":\"passthrough\"},\"id\":\"cab17220-f923-41e3-bcf9-e19494802119\",\"name\":\"Slide Input\",\"type\":\"n8n-nodes-base.executeWorkflowTrigger\",\"typeVersion\":1.1,\"position\":[0,0]},{\"parameters\":{\"method\":\"POST\",\"url\":\"https://api.cloudflare.com/client/v4/accounts/94c5a67651654b3a8c3e6d5265ca586b/ai/run/@cf/black-forest-labs/flux-1-schnell\",\"sendHeaders\":true,\"headerParameters\":{\"parameters\":[{\"name\":\"Authorization\",\"value\":\"Bearer YOUR_CLOUDFLARE_API_TOKEN\"}]},\"sendBody\":true,\"specifyBody\":\"json\",\"jsonBody\":\"={{ { prompt: $json.prompt } }}\",\"options\":{\"timeout\":90000,\"response\":{\"response\":{\"responseFormat\":\"json\"}}},\"authentication\":\"none\",\"contentType\":\"json\"},\"id\":\"e8a9f627-a88e-40ed-95bd-d323d5e964e5\",\"name\":\"Cloudflare: Generate Image\",\"type\":\"n8n-nodes-base.httpRequest\",\"typeVersion\":4.2,\"position\":[240,0]},{\"parameters\":{\"conditions\":{\"options\":{\"caseSensitive\":true,\"leftValue\":\"\",\"typeValidation\":\"strict\",\"version\":2},\"conditions\":[{\"id\":\"dfcc4620-370a-447f-bde3-8d7ea07fa08c\",\"leftValue\":\"={{ $json.success === true && typeof $json.result?.image === \\\"string\\\" && $json.result.image.length > 0 && $json.result.image.length <= 8388608 }}\",\"rightValue\":\"\",\"operator\":{\"type\":\"boolean\",\"operation\":\"true\",\"singleValue\":true}}],\"combinator\":\"and\"},\"options\":{}},\"id\":\"7d583865-b1c6-43b2-b4e7-8ec2ccb2b0b4\",\"name\":\"Validate Image Response\",\"type\":\"n8n-nodes-base.if\",\"typeVersion\":2.2,\"position\":[480,0]},{\"parameters\":{\"errorMessage\":\"Cloudflare returned no image or exceeded the 6 MiB decoded image limit.\"},\"id\":\"6b531c5f-1e77-41df-a1ed-72b73c898f08\",\"name\":\"Reject Image Response\",\"type\":\"n8n-nodes-base.stopAndError\",\"typeVersion\":1,\"position\":[720,240]},{\"parameters\":{\"operation\":\"toBinary\",\"sourceProperty\":\"result.image\",\"binaryPropertyName\":\"image\",\"options\":{\"fileName\":\"studio-slide.jpg\",\"mimeType\":\"image/jpeg\"}},\"id\":\"545c1456-6af3-4a31-8759-92b119f91810\",\"name\":\"Image: Base64 to File\",\"type\":\"n8n-nodes-base.convertToFile\",\"typeVersion\":1.1,\"position\":[720,0]},{\"parameters\":{\"assignments\":{\"assignments\":[{\"id\":\"0ac9ba70-a6e9-45c9-a1a3-5a7d29e23f28\",\"name\":\"slide\",\"value\":\"={{ $('Slide Input').first().json.slide }}\",\"type\":\"number\"},{\"id\":\"f4be48ac-fcf2-4d12-b8f2-5a01b0a8a971\",\"name\":\"imageUrl\",\"value\":\"={{ 'https://n8n.codewaft.com/studio-images/' + $('Generate Image ID').first().json.fileToken + '.jpg' }}\",\"type\":\"string\"}]},\"includeOtherFields\":false,\"options\":{\"includeBinary\":false}},\"id\":\"dcaf32ac-734d-433c-a748-a51df0bc2256\",\"name\":\"Return Image URL Only\",\"type\":\"n8n-nodes-base.set\",\"typeVersion\":3.4,\"position\":[1440,0]},{\"name\":\"Generate Image ID\",\"id\":\"083b47fc-4c08-46f4-a1e9-0099265994eb\",\"type\":\"n8n-nodes-base.crypto\",\"typeVersion\":2,\"parameters\":{\"action\":\"generate\",\"dataPropertyName\":\"fileToken\",\"encodingType\":\"uuid\"},\"position\":[120,-160]},{\"name\":\"Image: Write Public File\",\"id\":\"83d47c57-421d-4ef5-941d-d45d2f62a759\",\"type\":\"n8n-nodes-base.readWriteFile\",\"typeVersion\":1,\"parameters\":{\"operation\":\"write\",\"fileName\":\"={{ '/home/node/.n8n-files/studio-images/' + $('Generate Image ID').first().json.fileToken + '.jpg' }}\",\"dataPropertyName\":\"image\",\"options\":{}},\"position\":[960,0]},{\"name\":\"Image: Check Public URL\",\"id\":\"ee5c1af5-0ef4-4c4c-a567-d24aaf14266b\",\"type\":\"n8n-nodes-base.httpRequest\",\"typeVersion\":4.2,\"parameters\":{\"method\":\"HEAD\",\"url\":\"={{ 'https://n8n.codewaft.com/studio-images/' + $('Generate Image ID').first().json.fileToken + '.jpg' }}\",\"authentication\":\"none\",\"options\":{\"timeout\":10000,\"response\":{\"response\":{\"responseFormat\":\"text\",\"outputPropertyName\":\"probe\"}}}},\"position\":[1200,0]}],\"connections\":{\"Slide Input\":{\"main\":[[{\"node\":\"Generate Image ID\",\"type\":\"main\",\"index\":0}]]},\"Generate Image ID\":{\"main\":[[{\"node\":\"Cloudflare: Generate Image\",\"type\":\"main\",\"index\":0}]]},\"Cloudflare: Generate Image\":{\"main\":[[{\"node\":\"Validate Image Response\",\"type\":\"main\",\"index\":0}]]},\"Image: Base64 to File\":{\"main\":[[{\"node\":\"Image: Write Public File\",\"type\":\"main\",\"index\":0}]]},\"Image: Write Public File\":{\"main\":[[{\"node\":\"Image: Check Public URL\",\"type\":\"main\",\"index\":0}]]},\"Image: Check Public URL\":{\"main\":[[{\"node\":\"Return Image URL Only\",\"type\":\"main\",\"index\":0}]]},\"Validate Image Response\":{\"main\":[[{\"node\":\"Image: Base64 to File\",\"type\":\"main\",\"index\":0}],[{\"node\":\"Reject Image Response\",\"type\":\"main\",\"index\":0}]]}},\"settings\":{\"executionOrder\":\"v1\",\"executionTimeout\":180,\"saveDataSuccessExecution\":\"none\",\"saveDataErrorExecution\":\"none\",\"saveManualExecutions\":false,\"saveExecutionProgress\":false}}",
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "4cd57c17-4c3c-4f3b-9efe-1a1267e80603",
+      "name": "Render Slides Sequentially",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Only text/URLs enter this task runner; image data stays in native child nodes.\nconst draftMeta = $(\"Verify AI Output & Token Guard\").first().json;\nconst chatId = String(draftMeta.chatId);\nconst definitions = $(\"Prepare Slide Definitions\").all().map(item => item.json);\nconst results = $input.all().map(item => item.json);\nif (results.length !== definitions.length) throw new Error(\"Not all slide images completed. No partial draft was saved.\");\nconst urls = new Map();\nfor (const result of results) {\n  if (!Number.isInteger(result.slide) || urls.has(result.slide) ||\n      typeof result.imageUrl !== \"string\" ||\n      !/^https:\\/\\/n8n\\.codewaft\\.com\\/studio-images\\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\.jpg$/i.test(result.imageUrl)) {\n    throw new Error(\"Invalid or duplicate slide result. No partial draft was saved.\");\n  }\n  urls.set(result.slide, result.imageUrl);\n}\nconst slides = definitions.map(s => {\n  if (!urls.has(s.slide)) throw new Error(\"Missing image for slide \" + s.slide);\n  return { slide: s.slide, type: s.type, categoryTag: s.categoryTag, title: s.title,\n    cards: s.cards, imagePrompt: s.prompt, imageUrl: urls.get(s.slide) };\n});\nconst staticData = $getWorkflowStaticData(\"global\");\nconst html = value => String(value || \"\").replace(/&/g, \"&amp;\").replace(/</g, \"&lt;\").replace(/>/g, \"&gt;\");\n// Build the comprehensive Telegram review card text\nlet reviewCard = \"✨ <b>INSTAGRAM POST DRAFT READY! (v\" + draftMeta.iterationCount + \")</b>\\n\";\nreviewCard += \"━━━━━━━━━━━━━━━━━━━━\\n\\n\";\nreviewCard += \"🏷️ <b>Format:</b> \" + (draftMeta.format === \"carousel\" ? (\"📚 \" + slides.length + \"-Slide Carousel Album\") : \"🖼️ Single Editorial Post\") + \"\\n\";\nreviewCard += \"🎨 <b>Theme:</b> \" + html(draftMeta.theme?.categoryTag || \"STRATEGIC GUIDE\") + \" · \" + html(draftMeta.theme?.style || \"Editorial Field Guide\") + \"\\n\\n\";\n\nreviewCard += \"📝 <b>Instagram Caption:</b>\\n\" + html(draftMeta.caption) + \"\\n\\n\";\nif (draftMeta.hashtags) {\n  reviewCard += \"📌 \" + html(draftMeta.hashtags) + \"\\n\\n\";\n}\n\nreviewCard += \"━━━━━━━━━━━━━━━━━━━━\\n\";\nreviewCard += \"📚 <b>Publication Slides (\" + slides.length + \" Visuals · FLUX · Cloudflare AI):</b>\\n\";\nslides.forEach(s => {\n  reviewCard += \"• <b>Slide \" + s.slide + \" (\" + html(s.categoryTag) + \"):</b> \" + html(s.title) + \" ➔ <a href=\\\"\" + s.imageUrl + \"\\\">Preview \" + s.slide + \"</a>\\n\";\n});\nreviewCard += \"\\nReview the slide graphics above and approve below! 👇\";\n\n// Build lightweight slides metadata (no base64 in staticData – task runner safe)\nconst cleanSlidesMeta = slides.map(s => ({\n  slide: s.slide,\n  type: s.type,\n  categoryTag: s.categoryTag,\n  title: s.title,\n  cards: s.cards,\n  imagePrompt: s.imagePrompt,\n  imageUrl: s.imageUrl,    // ← disk-backed Caddy URL, not ephemeral webhook\n  slideId: s.slideId\n}));\n\nconst draftObj = {\n  chatId,\n  topic: draftMeta.topic,\n  format: draftMeta.format,\n  theme: draftMeta.theme,\n  caption: draftMeta.caption,\n  hashtags: draftMeta.hashtags,\n  imagePrompt: slides[0].imagePrompt,\n  imageUrl: slides[0].imageUrl,\n  carouselSlides: cleanSlidesMeta,\n  iterationCount: draftMeta.iterationCount\n};\n\n// Reuse workflow memory initialized above (no base64 stored).\nstaticData.sessions = staticData.sessions || {};\nstaticData.sessions[chatId] = {\n  state: \"waiting_approval\",\n  currentDraft: draftObj\n};\nstaticData.lastDraft = draftObj;\n\n// Output each slide with URL only — Telegram sends photo by URL (no binary payload needed)\n// This keeps the task runner memory footprint minimal across all slides\nreturn slides.map(s => ({\n  json: {\n    chatId: chatId,\n    slideNum: s.slide,\n    totalSlides: slides.length,\n    imageUrl: s.imageUrl,         // Caddy CDN URL — Telegram fetches it directly\n    slideCaption: \"📖 <b>Slide \" + s.slide + \" / \" + slides.length + \" (\" + html(s.categoryTag) + \"):</b> \" + html(s.title),\n    ...(s.slide === 1 ? { summaryCard: reviewCard } : {})\n  }\n}));\n"
+      },
+      "id": "77670e19-9c03-436e-bcdc-9b678169df2f",
+      "name": "Finalize Draft from Image URLs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Telegram Bot Trigger": {
+      "main": [
+        [
+          {
+            "node": "Route & Parse Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route & Parse Event": {
+      "main": [
+        [
+          {
+            "node": "Switch Event Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Event Type": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Download Voice File",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Evaluate Text Intent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle Callback Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram: Download Voice File": {
+      "main": [
+        [
+          {
+            "node": "Prepare Voice Audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Voice Audio": {
+      "main": [
+        [
+          {
+            "node": "Gemini 3.5: Transcribe Voice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini 3.5: Transcribe Voice": {
+      "main": [
+        [
+          {
+            "node": "Extract Voice Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Voice Text": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Text Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Text Intent": {
+      "main": [
+        [
+          {
+            "node": "Switch Text Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Text Action": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Ask Single vs Carousel",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram: Show Help Guide",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram: Notify Generating",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare AI Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Callback Query": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Acknowledge Callback",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Switch Callback Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram: Acknowledge Callback": {
+      "main": [
+        []
+      ]
+    },
+    "Switch Callback Action": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Notify Generating",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram: Notify Publishing",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram: Prompt for Tweaks",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram: Start Fresh Notice",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram: Cancel Draft Notice",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram: Error No Draft Notice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram: Notify Generating": {
+      "main": [
+        [
+          {
+            "node": "Prepare AI Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare AI Prompt": {
+      "main": [
+        [
+          {
+            "node": "Gemini 3.5: Creative Director",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini 3.5: Creative Director": {
+      "main": [
+        [
+          {
+            "node": "Verify AI Output & Token Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify AI Output & Token Guard": {
+      "main": [
+        [
+          {
+            "node": "Prepare Slide Definitions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram: Notify Publishing": {
+      "main": [
+        [
+          {
+            "node": "Instagram: Publish Live (Single or Carousel)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Global Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Format Error Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Error Alert": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Send Error Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Instagram: Publish Live (Single or Carousel)": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Published Success Notice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram: Send Carousel Slides": {
+      "main": [
+        [
+          {
+            "node": "Prepare Approval Card",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Approval Card": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Send Draft & Approval Buttons",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook: Serve Studio Image": {
+      "main": [
+        [
+          {
+            "node": "Lookup Image Binary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lookup Image Binary": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook: Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Slide Definitions": {
+      "main": [
+        [
+          {
+            "node": "Render Slides Sequentially",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Render Slides Sequentially": {
+      "main": [
+        [
+          {
+            "node": "Finalize Draft from Image URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize Draft from Image URLs": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Send Carousel Slides",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "executionTimeout": 900
+  }
+}

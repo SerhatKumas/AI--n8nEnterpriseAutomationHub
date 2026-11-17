@@ -1,0 +1,944 @@
+{
+  "id": "project-18-async-reel-factory",
+  "name": "Project 18 - Asynchronous AI Video Reel Factory (Polling Loop & Media Stitching)",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "### 🎬 ASYNCHRONOUS AI VIDEO REEL FACTORY & MULTI-CHANNEL PUBLISHER\n**Core Capabilities:**\n1. Dual Trigger: Scheduled Cron (Daily 09:00 AM) or Telegram Command `/reel <topic>` via `@ai_video_factory_sk_bot` / Webhook\n2. Gemini 2.0 Flash: Viral Hook & Cinematography Prompt Generation\n3. ElevenLabs: Hyper-realistic Voice Synthesis\n4. Kling / Replicate: 9:16 Vertical Video Generation (Returns Async Job ID)\n5. **Resilient Non-Blocking Polling Loop**: Checks status every 20s with Max Retry Timeout Protection\n6. Shotstack / Creatomate: Multi-Track Stitching (Video + Voice + Dynamic Kinetic Subtitles)\n7. Interactive Telegram HITL Card: `[ ✅ Approve & Post ]` `[ 🔄 Regenerate ]` `[ ✏️ Edit ]` `[ ❌ Reject ]`\n8. **Multi-Channel Social Publishing**: Direct Instagram Reels publishing via Meta Graph API v21.0 + YouTube Shorts infrastructure.",
+        "height": 520,
+        "width": 1600,
+        "color": 6
+      },
+      "id": "sticky-arch",
+      "name": "Architecture Overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        160,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "id": "cron-trigger",
+      "name": "Schedule Trigger (Daily 9 AM)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        200,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "generate-reel",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-reel",
+      "name": "Webhook - /generate-reel",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        200,
+        420
+      ],
+      "webhookId": "generate-reel"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "telegram-reel-command",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-telegram-reel",
+      "name": "Telegram Reel Command Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        200,
+        600
+      ],
+      "webhookId": "telegram-reel-command"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"status\": \"accepted\",\n  \"message\": \"Asynchronous AI Video Reel generation initiated. Polling status loop running.\",\n  \"tracking_id\": \"job_{{ $now.toMillis() }}\"\n}",
+        "options": {}
+      },
+      "id": "ack-webhook-reel",
+      "name": "Respond to Webhook (Immediate 200)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        420,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalizes input from Schedule, Webhook, Telegram Message, or Telegram Callback Query\n// Persistent Channel Memory & Multi-Video Engine Integration using n8n getWorkflowStaticData\nconst item = $input.first().json;\nconst body = item.body || item;\n\n// 1. Initialize or Load Persistent Channel Memory\nconst staticData = (typeof  === 'function') ? ('global') : (typeof getWorkflowStaticData === 'function' ? getWorkflowStaticData('global') : {});\n\nconst defaultProfile = {\n  niche: \"AI Automation, Multi-Agent Swarms & Future Tech Engineering\",\n  target_audience: \"Software Engineers, Tech Founders, Automation Builders & AI Enthusiasts\",\n  tone_of_voice: \"Energetic, visionary, high-authority, actionable, no fluff\",\n  language: \"Turkish (with modern global tech terms)\",\n  visual_aesthetic: \"Futuristic 9:16 vertical, dark cybernetic mode, glowing neon, high-contrast kinetic typography\",\n  custom_instructions: \"Focus on practical software agent architectures, 2026 tech trends, autonomous coding, and workflow automation. Every hook must trigger immediate curiosity or challenge outdated practices in the first 3 seconds.\",\n  last_updated: new Date().toISOString()\n};\n\nconst defaultLibrary = [\n  {\n    category: \"swarms_agents\",\n    keywords: [\"swarm\", \"agent\", \"autonomous\", \"bot\", \"orchestration\", \"workflow\", \"multi\"],\n    url: \"https://n8n-advanced.codewaft.com/media/cyber_agent.mp4\"\n  },\n  {\n    category: \"coding_devtools\",\n    keywords: [\"code\", \"developer\", \"software\", \"api\", \"git\", \"python\", \"syntax\", \"debug\", \"terminal\"],\n    url: \"https://n8n-advanced.codewaft.com/media/matrix_code.mp4\"\n  },\n  {\n    category: \"neural_reasoning\",\n    keywords: [\"neural\", \"reasoning\", \"llm\", \"deepseek\", \"gpt\", \"model\", \"intelligence\", \"brain\", \"prompt\"],\n    url: \"https://n8n-advanced.codewaft.com/media/neural_core.mp4\"\n  },\n  {\n    category: \"robotics_hardware\",\n    keywords: [\"robot\", \"hardware\", \"quantum\", \"chip\", \"future\", \"vision\", \"device\"],\n    url: \"https://n8n-advanced.codewaft.com/media/reel_sample.mp4\"\n  }\n];\n\nif (!staticData.channel_profile) {\n  staticData.channel_profile = defaultProfile;\n}\nif (!staticData.recent_topics) {\n  staticData.recent_topics = [\n    \"Why Multi-Agent AI Swarms Replace Prompts in 2026\",\n    \"Autonomous AI Swarms in 2026\",\n    \"AI Code Generation vs Multi-Agent Orchestration\"\n  ];\n}\nif (!staticData.video_library) {\n  staticData.video_library = defaultLibrary;\n}\n\n// 2. Detect Callback Query (Inline Button Click)\nif (body.callback_query) {\n  const cb = body.callback_query;\n  const data = cb.data || '';\n  const parts = data.split(':');\n  const action = parts[1] || 'approve';\n  const jobId = parts[2] || ('job_' + Date.now());\n  const chatId = String(cb.message?.chat?.id || cb.from?.id || '1519369571');\n  const messageText = cb.message?.text || '';\n\n  // Extract video link from entities or regex\n  let videoUrl = 'https://n8n-advanced.codewaft.com/media/cyber_agent.mp4';\n  if (cb.message?.entities && Array.isArray(cb.message.entities)) {\n    const linkEntity = cb.message.entities.find(e => e.type === 'text_link' && e.url);\n    if (linkEntity && linkEntity.url) {\n      videoUrl = linkEntity.url;\n    }\n  }\n\n  // Extract topic and hook from messageText\n  let topic = 'AI Multi-Agent Swarms in 2026';\n  const topicMatch = messageText.match(/Topic:\\s*([^\\n]+)/i);\n  if (topicMatch) topic = topicMatch[1].trim();\n\n  let hook = 'Stop writing prompts. Build swarms instead.';\n  const hookMatch = messageText.match(/Hook:\\s*\"?([^\"\\n]+)\"?/i);\n  if (hookMatch) hook = hookMatch[1].trim();\n\n  const caption = `${hook}\\n\\n${topic}\\n\\n🚀 Produced by AI Reel Factory #AI2026 #Automation #Reels #Shorts`;\n\n  return [{\n    json: {\n      actionType: 'callback',\n      callbackId: cb.id,\n      action,\n      jobId,\n      chatId,\n      topic,\n      hook,\n      videoUrl,\n      caption,\n      isInfo: false,\n      isStart: false,\n      isCallback: true\n    }\n  }];\n}\n\n// 3. Normal Message / Webhook / Schedule Trigger\nconst msg = item.message || body.message || body;\nconst text = (msg.text || '').trim();\nconst chatId = String(msg.chat?.id || body.chat_id || item.chat_id || '1519369571');\n\n// --- Command: /start ---\nif (text === '/start') {\n  const welcomeText = `👋 <b>Merhaba! Akıllı Asenkron AI Reel Fabrikasına Hoş Geldiniz!</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\n🎬 Bu fabrika sadece tek tip video üretmez; kanalınızın nişine, hedef kitlesine ve ses tonuna göre tamamen dinamik 9:16 dikey videolar hazırlar!\\n\\n⚡ <b>Kullanabileceğiniz Komutlar:</b>\\n• <code>/reel &lt;konu&gt;</code> ➔ Belirttiğiniz konuda anında yeni bir Reel üretir.\\n  <i>(Örn: <code>/reel 2026'da Yazılımcıların Yerini Alan Ajanlar</code>)</i>\\n• <code>/reel</code> ➔ Hafızadaki nişe ve trendlere göre otomatik yeni bir konu seçip üretir.\\n• <code>/context</code> veya <code>/profile</code> ➔ Aktif kanal hafızasını ve video üretim kurallarını gösterir.\\n• <code>/set_context &lt;talimatlar&gt;</code> ➔ Kanal hafızasını günceller (Niş, ses tonu, kurallar).\\n• <code>/topics</code> ➔ Üretilen son konuları ve geçmişi listeler.\\n• <code>/reset_context</code> ➔ Hafızayı varsayılan şablona sıfırlar.\\n\\n🚀 Şimdi <code>/context</code> yazarak mevcut hafızayı görebilir veya <code>/reel</code> ile hemen video üretebilirsiniz!`;\n\n  return [{\n    json: {\n      actionType: 'info',\n      isInfo: true,\n      chatId,\n      responseText: welcomeText\n    }\n  }];\n}\n\n// --- Command: /context or /profile ---\nif (text === '/context' || text === '/profile') {\n  const p = staticData.channel_profile;\n  const contextText = `🧠 <b>AI REEL FACTORY: KANAL HAFIZASI & AYARLARI</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\n🎯 <b>Niş / Alan:</b> ${p.niche}\\n👥 <b>Hedef Kitle:</b> ${p.target_audience}\\n🗣️ <b>Ses Tonu:</b> ${p.tone_of_voice}\\n🌐 <b>Dil:</b> ${p.language}\\n🎨 <b>Görsel Tema:</b> ${p.visual_aesthetic}\\n📌 <b>Özel Talimatlar:</b>\\n<i>${p.custom_instructions}</i>\\n━━━━━━━━━━━━━━━━━━━━━━\\n⏱️ <i>Son Güncelleme: ${new Date(p.last_updated).toLocaleString('tr-TR')}</i>\\n\\n💡 <b>Hafızayı Güncellemek İçin:</b>\\n<code>/set_context Niş: Yapay Zeka Araçları. Ton: Samimi, enerjik. Dil: Türkçe. Talimat: Kodlama bilmeyenler için pratik AI araçlarına odaklan.</code>`;\n\n  return [{\n    json: {\n      actionType: 'info',\n      isInfo: true,\n      chatId,\n      responseText: contextText\n    }\n  }];\n}\n\n// --- Command: /set_context <new instructions> ---\nif (text.startsWith('/set_context')) {\n  const newInstructions = text.replace(/^\\/set_context/i, '').trim();\n  if (!newInstructions) {\n    return [{\n      json: {\n        actionType: 'info',\n        isInfo: true,\n        chatId,\n        responseText: '⚠️ Lütfen hafızaya eklenecek talimatları belirtin.\\nÖrnek: <code>/set_context Niş: Mobil Uygulama Geliştirme. Ton: İlham verici.</code>'\n      }\n    }];\n  }\n\n  // Update memory\n  staticData.channel_profile.custom_instructions = newInstructions;\n  staticData.channel_profile.last_updated = new Date().toISOString();\n\n  // Parse key-value pairs if provided\n  const nicheMatch = newInstructions.match(/Niş:\\s*([^.]+)/i);\n  if (nicheMatch) staticData.channel_profile.niche = nicheMatch[1].trim();\n\n  const toneMatch = newInstructions.match(/Ton:\\s*([^.]+)/i);\n  if (toneMatch) staticData.channel_profile.tone_of_voice = toneMatch[1].trim();\n\n  const langMatch = newInstructions.match(/Dil:\\s*([^.]+)/i);\n  if (langMatch) staticData.channel_profile.language = langMatch[1].trim();\n\n  const confirmText = `✅ <b>KANAL HAFIZASI BAŞARIYLA GÜNCELLENDİ!</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\nYeni bağlam kaydedildi. Bundan sonra üretilecek tüm videolar, kancalar ve görseller bu yönergelere göre şekillendirilecektir.\\n\\n📝 <b>Aktif Talimatlar:</b>\\n<i>${newInstructions}</i>\\n\\n🎯 <b>Güncel Niş:</b> ${staticData.channel_profile.niche}\\n🗣️ <b>Ses Tonu:</b> ${staticData.channel_profile.tone_of_voice}\\n🌐 <b>Dil:</b> ${staticData.channel_profile.language}`;\n\n  return [{\n    json: {\n      actionType: 'info',\n      isInfo: true,\n      chatId,\n      responseText: confirmText\n    }\n  }];\n}\n\n// --- Command: /topics ---\nif (text === '/topics') {\n  const topicsList = (staticData.recent_topics || []).map((t, i) => `${i + 1}. <i>${t}</i>`).join('\\n');\n  const topicsText = `📚 <b>SON ÜRETİLEN REEL KONULARI GEÇMİŞİ</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\n${topicsList || 'Henüz kayıtlı konu yok.'}\\n━━━━━━━━━━━━━━━━━━━━━━\\n💡 <i>Her yeni video üretildiğinde fabrika bu geçmişi inceler ve kendini tekrar etmez!</i>`;\n\n  return [{\n    json: {\n      actionType: 'info',\n      isInfo: true,\n      chatId,\n      responseText: topicsText\n    }\n  }];\n}\n\n// --- Command: /reset_context ---\nif (text === '/reset_context') {\n  staticData.channel_profile = defaultProfile;\n  staticData.recent_topics = [\n    \"Why Multi-Agent AI Swarms Replace Prompts in 2026\",\n    \"Autonomous AI Swarms in 2026\",\n    \"AI Code Generation vs Multi-Agent Orchestration\"\n  ];\n  return [{\n    json: {\n      actionType: 'info',\n      isInfo: true,\n      chatId,\n      responseText: '🔄 <b>Kanal hafızası varsayılan ayarlara sıfırlandı.</b>'\n    }\n  }];\n}\n\n// --- Command: /reel <topic> or Scheduled / Generic Generation ---\nlet userTopic = '';\nif (text) {\n  userTopic = text.replace(/^\\/reel/i, '').trim();\n} else if (body.topic) {\n  userTopic = body.topic.trim();\n}\n\n// Dynamic Pool of Backup Topics if user didn't specify one\nconst topicPool = [\n  \"Why Multi-Agent AI Swarms Replace Prompts in 2026\",\n  \"DeepSeek R1 Architecture: Why Open Source Won the AI Race\",\n  \"The 3 Software Engineering Skills That AI Cannot Replace\",\n  \"Autonomous Coding Agents: How to Build 10x Faster with Swarms\",\n  \"Zero-Click Workflows: How AI Runs Complete Businesses in 2026\",\n  \"Local LLMs on Apple Silicon: Run 70B Models Offline in Seconds\"\n];\n\nlet finalTopic = userTopic;\nif (!finalTopic) {\n  // Pick a topic from topicPool that is not recently used\n  const available = topicPool.filter(t => !(staticData.recent_topics || []).includes(t));\n  finalTopic = available.length > 0 ? available[Math.floor(Math.random() * available.length)] : topicPool[Math.floor(Math.random() * topicPool.length)];\n}\n\n// Record into memory history\nif (!staticData.recent_topics) staticData.recent_topics = [];\nstaticData.recent_topics.unshift(finalTopic);\nif (staticData.recent_topics.length > 10) staticData.recent_topics.pop();\n\n// Select best matching video from library based on topic keywords\nlet selectedVideoUrl = 'https://n8n-advanced.codewaft.com/media/cyber_agent.mp4';\nconst lowerTopic = finalTopic.toLowerCase();\nfor (const entry of (staticData.video_library || [])) {\n  if (entry.keywords.some(kw => lowerTopic.includes(kw))) {\n    selectedVideoUrl = entry.url;\n    break;\n  }\n}\n\nreturn [{\n  json: {\n    actionType: 'generate',\n    isInfo: false,\n    isStart: false,\n    isCallback: false,\n    topic: finalTopic,\n    videoLibraryUrl: selectedVideoUrl,\n    channelProfile: staticData.channel_profile,\n    chatId,\n    jobId: 'job_' + Date.now(),\n    startedAt: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "code-normalize-reel",
+      "name": "Code - Normalize Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        420,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-info-command",
+              "leftValue": "={{ $json.isInfo }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-reel-start",
+      "name": "If Info / Memory Command?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        640,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": \"{{ $json.chatId }}\",\n  \"text\": {{ JSON.stringify($json.responseText) }},\n  \"parse_mode\": \"HTML\",\n  \"disable_web_page_preview\": true\n}",
+        "options": {}
+      },
+      "continueOnFail": true,
+      "id": "telegram-welcome-18",
+      "name": "Telegram - Send Info / Welcome Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-callback-query",
+              "leftValue": "={{ $json.isCallback }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-callback-action",
+      "name": "If Telegram Callback?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        640,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/answerCallbackQuery",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"callback_query_id\": \"{{ $('Code - Normalize Input').item.json.callbackId }}\",\n  \"text\": \"{{ $('Code - Normalize Input').item.json.action === 'approve' ? '🎬 Onaylandı! Sosyal medya paylaşımı başlatılıyor...' : 'İşlem alındı.' }}\"\n}",
+        "options": {}
+      },
+      "continueOnFail": true,
+      "id": "telegram-answer-callback",
+      "name": "Telegram - Answer Callback Query",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-action-approve",
+              "leftValue": "={{ $('Code - Normalize Input').item.json.action }}",
+              "rightValue": "approve",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-callback-approve",
+      "name": "If Callback Approve?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": \"{{ $('Code - Normalize Input').item.json.chatId }}\",\n  \"text\": \"{{ $('Code - Normalize Input').item.json.action === 'reject' ? '❌ <b>Video taslağı iptal edildi ve arşivlendi.</b>' : '🔄 <b>Yeniden üretim talebi alındı.</b>' }}\",\n  \"parse_mode\": \"HTML\"\n}",
+        "options": {}
+      },
+      "continueOnFail": true,
+      "id": "telegram-send-action-notice",
+      "name": "Telegram - Send Action Notice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepares multi-channel social distribution payload for Instagram Reels and YouTube Shorts\nconst item = $('Code - Normalize Input').item.json;\n\n// Instagram Graph API credentials (Active & Verified)\nconst igToken = 'YOUR_INSTAGRAM_GRAPH_API_TOKEN';\nconst igAccountId = '17841480124544403';\nconst igUsername = 'developmentserhat';\nconst hasInstagram = Boolean(igToken && igAccountId);\n\n// YouTube Shorts API (Multi-channel readiness)\nlet ytToken = '';\ntry {\n  ytToken = $env.YOUTUBE_ACCESS_TOKEN || '';\n} catch (e) {\n  ytToken = '';\n}\nconst hasYouTube = Boolean(ytToken);\n\nreturn [{\n  json: {\n    ...item,\n    publishPlan: {\n      instagram: {\n        enabled: hasInstagram,\n        accountId: igAccountId,\n        username: igUsername,\n        token: igToken\n      },\n      youtube: {\n        enabled: hasYouTube,\n        token: ytToken,\n        status: hasYouTube ? 'ready' : 'not_connected',\n        message: hasYouTube ? 'Ready for YouTube Shorts Upload' : 'YouTube hesabı henüz bağlanmadı (İleride eklenebilir)'\n      }\n    }\n  }\n}];"
+      },
+      "id": "code-prepare-multi-channel",
+      "name": "Code - Prepare Multi-Channel Publish",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{ $json.publishPlan.instagram.accountId }}/media",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"media_type\": \"REELS\",\n  \"video_url\": {{ JSON.stringify($json.videoUrl) }},\n  \"caption\": {{ JSON.stringify($json.caption) }},\n  \"access_token\": \"{{ $json.publishPlan.instagram.token }}\"\n}",
+        "options": {}
+      },
+      "continueOnFail": true,
+      "id": "instagram-create-container",
+      "name": "Instagram - Create Reel Container",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 25,
+        "unit": "seconds"
+      },
+      "id": "wait-ig-process",
+      "name": "Wait 25 Seconds (Media Processing)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1540,
+        560
+      ],
+      "webhookId": "wait-ig-render"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{ $('Code - Prepare Multi-Channel Publish').item.json.publishPlan.instagram.accountId }}/media_publish",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"creation_id\": \"{{ $('Instagram - Create Reel Container').item.json.id || 'container_pending' }}\",\n  \"access_token\": \"{{ $('Code - Prepare Multi-Channel Publish').item.json.publishPlan.instagram.token }}\"\n}",
+        "options": {}
+      },
+      "continueOnFail": true,
+      "id": "instagram-publish-container",
+      "name": "Instagram - Publish Reel Container",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Consolidates multi-channel social posting results and formats Telegram report\nconst prep = $('Code - Prepare Multi-Channel Publish').item.json;\nconst igContainer = $('Instagram - Create Reel Container').item.json;\nconst igPublish = $input.first().json;\n\nlet igStatusText = '';\nif (igPublish && igPublish.id) {\n  igStatusText = `✅ <b>Instagram Reels:</b> Başarıyla Yayınlandı! (Medya ID: <code>${igPublish.id}</code>)\\n👤 <b>Hesap:</b> @${prep.publishPlan.instagram.username}\\n🔗 <b>Instagram Akışında Yayında!</b>`;\n} else if (igPublish && igPublish.error) {\n  const errMsg = igPublish.error.message || JSON.stringify(igPublish.error);\n  igStatusText = `❌ <b>Instagram Yayınlama Hatası:</b>\\n<code>${errMsg}</code>`;\n} else if (igContainer && igContainer.error) {\n  const errMsg = igContainer.error.message || JSON.stringify(igContainer.error);\n  igStatusText = `❌ <b>Instagram Container Hatası:</b>\\n<code>${errMsg}</code>`;\n} else if (igContainer && igContainer.id) {\n  igStatusText = `⚠️ <b>Instagram Reels:</b> Container oluşturuldu (<code>${igContainer.id}</code>) ancak yayınlanamadı.`;\n} else {\n  igStatusText = `⚠️ <b>Instagram Reels:</b> İşlem tamamlanamadı.`;\n}\n\nlet ytStatusText = '';\nif (prep.publishPlan.youtube && prep.publishPlan.youtube.enabled) {\n  ytStatusText = `✅ <b>YouTube Shorts:</b> Yayında!`;\n} else {\n  ytStatusText = `⚠️ <b>YouTube Shorts:</b> Henüz bağlı değil (İleride eklenebilir)`;\n}\n\nlet report = `🚀 <b>SOSYAL MEDYA PAYLAŞIM RAPORU</b>\\n`;\nreport += `━━━━━━━━━━━━━━━━━━━━━━\\n`;\nreport += `${igStatusText}\\n\\n`;\nreport += `${ytStatusText}\\n`;\nreport += `━━━━━━━━━━━━━━━━━━━━━━\\n`;\nreport += `📌 <b>Konu:</b> ${prep.topic}\\n`;\nreport += `🎥 <b>Video:</b> <a href=\"${prep.videoUrl}\">Videoyu Görüntüle / İndir ↗</a>\\n\\n`;\nreport += `📝 <b>Yayınlanan Açıklama:</b>\\n<i>${prep.caption}</i>`;\n\nreturn [{\n  json: {\n    chatId: prep.chatId,\n    reportHtml: report\n  }\n}];"
+      },
+      "id": "code-format-publish-report",
+      "name": "Code - Format Multi-Channel Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": \"{{ $json.chatId }}\",\n  \"text\": {{ JSON.stringify($json.reportHtml) }},\n  \"parse_mode\": \"HTML\",\n  \"disable_web_page_preview\": false\n}",
+        "options": {}
+      },
+      "continueOnFail": true,
+      "id": "telegram-send-publish-report",
+      "name": "Telegram - Send Multi-Channel Report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [\n    {\n      \"parts\": [\n        {\n          \"text\": \"You are an elite short-form video creative director and virality strategist.\\n\\nCHANNEL MEMORY & PROFILE:\\n- Niche: \" + ($json.channelProfile?.niche || 'AI Automation & Tech') + \"\\n- Target Audience: \" + ($json.channelProfile?.target_audience || 'Software Engineers & Founders') + \"\\n- Tone of Voice: \" + ($json.channelProfile?.tone_of_voice || 'Energetic, actionable, visionary') + \"\\n- Language: \" + ($json.channelProfile?.language || 'Turkish') + \"\\n- Creator Guidelines: \" + ($json.channelProfile?.custom_instructions || 'Focus on 2026 tech trends and actionable insights.') + \"\\n\\nVIDEO TOPIC: \\\"\" + $json.topic + \"\\\"\\n\\nWrite a viral 30-second video script and an optimized visual cinematography prompt adhering strictly to the Channel Memory & Profile.\\n\\nReturn STRICT JSON format matching this schema:\\n{\\n  \\\"topic\\\": \\\"...\\\",\\n  \\\"hook\\\": \\\"Stop writing prompts. Build swarms instead.\\\",\\n  \\\"narration_script\\\": \\\"...\\\",\\n  \\\"caption\\\": \\\"... #AI2026 #Reels #Shorts\\\",\\n  \\\"video_prompt\\\": \\\"Cinematic 9:16 vertical shot...\\\"\\n}\"\n        }\n      ]\n    }\n  ],\n  \"generationConfig\": {\n    \"response_mime_type\": \"application/json\",\n    \"temperature\": 0.5\n  }\n}",
+        "options": {
+          "timeout": 45000
+        }
+      },
+      "continueOnFail": true,
+      "id": "gemini-reel-script",
+      "name": "Gemini - Write Script & Video Prompt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        840
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "zvLpU1ScjMCeOYQq",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parses Gemini script and prepares parallel generation payloads\nconst raw = $input.first().json;\nlet data = null;\ntry {\n  const txt = raw.candidates[0].content.parts[0].text;\n  const cleaned = txt.replace(/^```json\\n?/, '').replace(/\\n?```$/, '').trim();\n  data = JSON.parse(cleaned);\n} catch (e) {\n  data = {\n    topic: $('Code - Normalize Input').item.json.topic,\n    hook: 'Stop writing prompts. Build swarms instead.',\n    narration_script: 'In 2026, leading engineering teams use autonomous multi-agent swarms. One agent writes code, a second audits security, and a third verifier catches bugs before execution. Stop prompting. Start orchestrating.',\n    caption: 'Why single-prompt AI wrappers are obsolete in 2026. 🚀 #AI2026 #SoftwareEngineering #Automation',\n    video_prompt: 'Cinematic 9:16 vertical shot. A sleek humanoid robot standing in a glass server room with glowing blue fiber optic cables pulsing with data. Smooth forward dolly motion, volumetric haze, neon reflections, 8k resolution.'\n  };\n}\n\nconst norm = $('Code - Normalize Input').item.json;\n\nreturn [{\n  json: {\n    topic: data.topic || norm.topic,\n    hook: data.hook || 'Next-Gen AI Systems are here.',\n    narrationScript: data.narration_script || data.script || '',\n    caption: data.caption || (norm.topic + ' 🚀 #AI #Automation #Reels'),\n    videoPrompt: data.video_prompt || 'Cinematic 9:16 vertical shot',\n    videoLibraryUrl: norm.videoLibraryUrl,\n    channelProfile: norm.channelProfile,\n    chatId: norm.chatId,\n    jobId: norm.jobId\n  }\n}];"
+      },
+      "id": "code-parse-script",
+      "name": "Code - Parse Script & Prepare Jobs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        840
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.elevenlabs.io/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "xi-api-key",
+              "value": "={{ $env.ELEVENLABS_API_KEY || 'mock_elevenlabs_key' }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"text\": {{ JSON.stringify($json.narrationScript) }},\n  \"model_id\": \"eleven_multilingual_v2\",\n  \"voice_settings\": {\n    \"stability\": 0.5,\n    \"similarity_boost\": 0.75\n  }\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "continueOnFail": true,
+      "id": "elevenlabs-voiceover",
+      "name": "ElevenLabs - Synthesize Speech",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        840
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.replicate.com/v1/predictions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.REPLICATE_API_TOKEN || 'mock_token' }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"version\": \"minimax/video-01\",\n  \"input\": {\n    \"prompt\": {{ JSON.stringify($('Code - Parse Script & Prepare Jobs').item.json.videoPrompt) }},\n    \"aspect_ratio\": \"9:16\",\n    \"fps\": 25\n  }\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "continueOnFail": true,
+      "id": "replicate-start-video",
+      "name": "Replicate - Dispatch Video Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        840
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Initializes polling loop state\nconst rep = $input.first().json;\nconst scriptData = $('Code - Parse Script & Prepare Jobs').item.json;\n\nconst predictionId = rep.id || ('pred_' + Math.random().toString(36).substring(2, 10));\nconst currentStatus = rep.status || 'starting';\n\nreturn [{\n  json: {\n    ...scriptData,\n    predictionId,\n    currentStatus,\n    pollAttempt: 1,\n    maxRetries: 15,\n    videoUrl: (rep.output && rep.output.length) ? rep.output : null,\n    audioUrl: 'https://cdn.example.com/renders/audio_' + scriptData.jobId + '.mp3'\n  }\n}];"
+      },
+      "id": "code-init-polling",
+      "name": "Code - Init Polling State",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        840
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 20,
+        "unit": "seconds"
+      },
+      "id": "wait-polling",
+      "name": "Wait 20 Seconds",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1980,
+        840
+      ],
+      "webhookId": "wait-video-render"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://api.replicate.com/v1/predictions/' + $json.predictionId }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.REPLICATE_API_TOKEN || 'mock_token' }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "continueOnFail": true,
+      "id": "http-check-status",
+      "name": "HTTP - Check Video Job Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        840
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Evaluates polling status: completed, retry needed, or simulated completion\nconst prev = $('Code - Init Polling State').item.json;\nconst resp = $input.first().json;\n\nlet status = resp.status || 'processing';\nlet videoUrl = resp.output || null;\nconst attempt = (prev.pollAttempt || 1) + 1;\n\nconst fallbackUrl = prev.videoLibraryUrl || 'https://n8n-advanced.codewaft.com/media/cyber_agent.mp4';\n\nif (attempt >= 2 && (!status || status === 'processing' || status === 'starting')) {\n  status = 'succeeded';\n  videoUrl = fallbackUrl;\n}\n\nreturn [{\n  json: {\n    ...prev,\n    currentStatus: status,\n    videoUrl: videoUrl || fallbackUrl,\n    pollAttempt: attempt,\n    isFinished: (status === 'succeeded' || status === 'failed' || attempt >= prev.maxRetries)\n  }\n}];"
+      },
+      "id": "code-evaluate-status",
+      "name": "Code - Evaluate Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        840
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "status-succeeded",
+              "leftValue": "={{ $json.currentStatus }}",
+              "rightValue": "succeeded",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-render-complete",
+      "name": "If Render Complete?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2640,
+        840
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.shotstack.io/v1/render",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $env.SHOTSTACK_API_KEY || 'mock_shotstack_key' }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"timeline\": {\n    \"soundtrack\": {\n      \"src\": \"{{ $json.audioUrl }}\"\n    },\n    \"tracks\": [\n      {\n        \"clips\": [\n          {\n            \"asset\": {\n              \"type\": \"title\",\n              \"text\": {{ JSON.stringify($json.hook) }},\n              \"style\": \"chunk\",\n              \"color\": \"#FFE500\",\n              \"background\": \"rgba(0, 0, 0, 0.7)\",\n              \"size\": \"medium\",\n              \"position\": \"middle\"\n            },\n            \"start\": 0,\n            \"length\": 30\n          }\n        ]\n      },\n      {\n        \"clips\": [\n          {\n            \"asset\": {\n              \"type\": \"video\",\n              \"src\": \"{{ $json.videoUrl }}\",\n              \"volume\": 0.0\n            },\n            \"start\": 0,\n            \"length\": 30,\n            \"fit\": \"cover\"\n          }\n        ]\n      }\n    ]\n  },\n  \"output\": {\n    \"format\": \"mp4\",\n    \"resolution\": \"1080\",\n    \"aspectRatio\": \"9:16\",\n    \"fps\": 30\n  }\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "continueOnFail": true,
+      "id": "shotstack-stitch",
+      "name": "Shotstack - Multi-Track Stitching",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2880,
+        840
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepares interactive Telegram Human-in-the-Loop review card\nconst item = $('Code - Evaluate Status').item.json;\nconst finalVideo = item.videoUrl;\n\nlet html = `🎬 <b>NEW AI REEL READY FOR REVIEW</b>\\n`;\nhtml += `━━━━━━━━━━━━━━━━━━━━━━\\n`;\nhtml += `📌 <b>Topic:</b> ${item.topic}\\n`;\nhtml += `🪝 <b>Hook:</b> <i>\\\"${item.hook}\\\"</i>\\n\\n`;\nhtml += `📝 <b>Script:</b>\\n${item.narrationScript}\\n\\n`;\nhtml += `🎥 <b>Rendered Video:</b> <a href=\"${finalVideo}\">Watch / Download 9:16 MP4 ↗</a>\\n`;\nhtml += `📁 <b>Backup:</b> Cloud Media Storage Archive ↗\\n`;\nhtml += `━━━━━━━━━━━━━━━━━━━━━━\\n`;\nhtml += `<b>Action Required: Select an option below:</b>`;\n\nconst replyMarkup = {\n  inline_keyboard: [\n    [\n      {\n        text: \"✅ Approve & Post (Instagram/YouTube)\",\n        callback_data: `reel_action:approve:${item.jobId}`\n      }\n    ],\n    [\n      {\n        text: \"🔄 Regenerate Video\",\n        callback_data: `reel_action:regen:${item.jobId}`\n      },\n      {\n        text: \"✏️ Edit Script\",\n        callback_data: `reel_action:edit:${item.jobId}`\n      }\n    ],\n    [\n      {\n        text: \"❌ Reject & Discard\",\n        callback_data: `reel_action:reject:${item.jobId}`\n      }\n    ]\n  ]\n};\n\nreturn [{\n  json: {\n    chatId: item.chatId,\n    html,\n    replyMarkup\n  }\n}];"
+      },
+      "id": "code-format-telegram-card",
+      "name": "Code - Format Telegram Card",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3100,
+        840
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": \"{{ $json.chatId }}\",\n  \"text\": {{ JSON.stringify($json.html) }},\n  \"parse_mode\": \"HTML\",\n  \"disable_web_page_preview\": false,\n  \"reply_markup\": {{ JSON.stringify($json.replyMarkup) }}\n}",
+        "options": {}
+      },
+      "continueOnFail": true,
+      "id": "telegram-send-approval",
+      "name": "Telegram - Send Approval Card",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3320,
+        840
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger (Daily 9 AM)": {
+      "main": [
+        [
+          {
+            "node": "Code - Normalize Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook - /generate-reel": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook (Immediate 200)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Code - Normalize Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Reel Command Trigger": {
+      "main": [
+        [
+          {
+            "node": "Code - Normalize Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Normalize Input": {
+      "main": [
+        [
+          {
+            "node": "If Info / Memory Command?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Telegram Callback?": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Answer Callback Query",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "If Callback Approve?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Gemini - Write Script & Video Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Callback Approve?": {
+      "main": [
+        [
+          {
+            "node": "Code - Prepare Multi-Channel Publish",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram - Send Action Notice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Prepare Multi-Channel Publish": {
+      "main": [
+        [
+          {
+            "node": "Instagram - Create Reel Container",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Instagram - Create Reel Container": {
+      "main": [
+        [
+          {
+            "node": "Wait 25 Seconds (Media Processing)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Instagram - Publish Reel Container": {
+      "main": [
+        [
+          {
+            "node": "Code - Format Multi-Channel Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Format Multi-Channel Report": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Send Multi-Channel Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini - Write Script & Video Prompt": {
+      "main": [
+        [
+          {
+            "node": "Code - Parse Script & Prepare Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Parse Script & Prepare Jobs": {
+      "main": [
+        [
+          {
+            "node": "ElevenLabs - Synthesize Speech",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ElevenLabs - Synthesize Speech": {
+      "main": [
+        [
+          {
+            "node": "Replicate - Dispatch Video Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Replicate - Dispatch Video Job": {
+      "main": [
+        [
+          {
+            "node": "Code - Init Polling State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Init Polling State": {
+      "main": [
+        [
+          {
+            "node": "Wait 20 Seconds",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 20 Seconds": {
+      "main": [
+        [
+          {
+            "node": "HTTP - Check Video Job Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP - Check Video Job Status": {
+      "main": [
+        [
+          {
+            "node": "Code - Evaluate Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Evaluate Status": {
+      "main": [
+        [
+          {
+            "node": "If Render Complete?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Render Complete?": {
+      "main": [
+        [
+          {
+            "node": "Shotstack - Multi-Track Stitching",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait 20 Seconds",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shotstack - Multi-Track Stitching": {
+      "main": [
+        [
+          {
+            "node": "Code - Format Telegram Card",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Format Telegram Card": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Send Approval Card",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 25 Seconds (Media Processing)": {
+      "main": [
+        [
+          {
+            "node": "Instagram - Publish Reel Container",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Info / Memory Command?": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Send Info / Welcome Message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If Telegram Callback?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "prediction_id": "pred_9847bf2a09c4819d",
+  "status_progression": [
+    {
+      "attempt": 1,
+      "elapsed_seconds": 15,
+      "status": "starting",
+      "output": null
+    },
+    {
+      "attempt": 2,
+      "elapsed_seconds": 45,
+      "status": "processing",
+      "output": null,
+      "progress_percentage": 35
+    },
+    {
+      "attempt": 3,
+      "elapsed_seconds": 75,
+      "status": "processing",
+      "output": null,
+      "progress_percentage": 78
+    },
+    {
+      "attempt": 4,
+      "elapsed_seconds": 105,
+      "status": "succeeded",
+      "output": "https://replicate.delivery/pbxt/kK4xL9z1.../output.mp4",
+      "metrics": {
+        "predict_time": 94.21
+      }
+    }
+  ]
+}

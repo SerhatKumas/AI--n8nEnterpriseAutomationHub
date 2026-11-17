@@ -1,0 +1,392 @@
+{
+  "name": "Automated PDF Invoice Generator and Cloud Dispatcher",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "telegram-trigger",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        100,
+        300
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "CONFIGURE_TELEGRAM_INVOICE_BOT",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.message.text }}",
+        "options": {
+          "systemMessage": "=You are the professional, friendly, and detail-oriented Personal AI Financial Secretary & Invoice Specialist for Serhat Kumas.\nYour mission is to help Serhat generate professional PDF invoices and proposals through Telegram.\n\n📅 CURRENT DATE & TIME CONTEXT:\n- Today is: {{ $now.setZone('Europe/Berlin').toFormat('yyyy-MM-dd') }}\n- Day of week: {{ $now.setZone('Europe/Berlin').toFormat('EEEE') }}\n- Timezone: Europe/Berlin\n\n📌 INVOICER DETAILS (WHO ISSUES THE INVOICE):\n- Invoicer Name: Serhat Kumas (Always written as 'Serhat Kumas' to ensure clean ASCII rendering across all PDF readers)\n- Title: Software Engineer & AI Consultant\n- Location: Berlin, Germany\n- Email: serhat.kumas.SK@gmail.com\n\n📌 REQUIRED INFORMATION FOR AN INVOICE:\nTo generate an official invoice, you need:\n1. Client / Company Name (Who is this invoice for?)\n2. Service or Item Description (What was done? e.g. Consulting, Web Development, Automation)\n3. Total Amount & Currency (e.g. 1500 EUR, 2000 USD, 50000 TRY)\n4. Invoice Date (Defaults to today: {{ $now.setZone('Europe/Berlin').toFormat('yyyy-MM-dd') }} if not specified)\n\n✨ CRITICAL: PROFESSIONAL DESCRIPTION REFINEMENT RULE:\n- When Serhat provides a casual, rough, or shorthand description in his message (e.g. 'web sitesi yapimi ve ai bot', 'consulting 3 days', 'api entegrasyonu', 'escape room automation', 'fatura keselim web dev'), ALWAYS elevate and rephrase it into an eloquent, professional, formal invoice line item without altering the original scope or meaning!\n- The description should sound like an enterprise consulting service deliverable.\n- Maintain the prompt language (Turkish or English):\n  * 'web sitesi ve ai bot' -> 'Kurumsal Web Sitesi Gelistirme ve Yapay Zeka Bot Entegrasyon Hizmetleri'\n  * 'cloud setup ve optimizasyon' -> 'Bulut Altyapi Kurulumu, Sistem Mimarisi ve Performans Optimizasyonu'\n  * 'danismanlik 2 gun' -> 'Stratejik Teknik Danismanlik ve Mimari Degerlendirme Hizmeti'\n  * 'web dev and ai integration' -> 'Full-Stack Web Application Development & AI System Integration'\n\n📌 CONVERSATIONAL & SLOT-FILLING RULES:\n1. If any critical detail is missing (Client Name, Description, or Amount):\n   - DO NOT generate the invoice yet.\n   - Politely ask Serhat for the missing details in a friendly, conversational manner.\n   - Always respond in the user's language (Turkish if prompted in Turkish, English if in English).\n2. If Serhat provides all details:\n   - Confirm the details warmly and show the refined professional description.\n   - Output a SINGLE JSON action block at the very end of your response.\n\n🎯 STRICT JSON ACTION BLOCK FORMAT:\nWhen all details are confirmed and ready to create the invoice, append this exact code block:\n```json:invoice_action\n{\n  \"action\": \"create_invoice\",\n  \"clientName\": \"<Client Company or Individual Name>\",\n  \"clientAddress\": \"<Optional Client Address or city, or empty string>\",\n  \"description\": \"<Polished, Professional Service / Item Description>\",\n  \"amount\": <number, e.g. 1500>,\n  \"currency\": \"<e.g. EUR, USD, TRY, GBP>\",\n  \"currencySymbol\": \"<e.g. €, $, ₺, £>\",\n  \"invoiceDate\": \"<YYYY-MM-DD, defaults to today>\",\n  \"dueDate\": \"<YYYY-MM-DD, defaults to 14 days after invoiceDate>\",\n  \"invoiceNumber\": \"INV-{{ $now.setZone('Europe/Berlin').toFormat('yyyyMMdd') }}-01\",\n  \"notes\": \"Payment due within 14 days. Thank you for your business!\"\n}\n```\n\nIf you are still asking questions or chatting, DO NOT include any code block."
+        }
+      },
+      "id": "invoice-ai-agent",
+      "name": "AI Invoice Assistant",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        360,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-3.5-flash",
+        "options": {
+          "temperature": 0.2
+        }
+      },
+      "id": "gemini-chat-model",
+      "name": "Google Gemini Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        300,
+        520
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "CONFIGURE_GEMINI_CREDENTIAL",
+          "name": "Google Gemini(PaLM) API account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('Telegram Trigger').item.json.message.chat.id.toString() }}",
+        "contextWindowLength": 12
+      },
+      "id": "window-memory",
+      "name": "Window Buffer Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        480,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rawOutput = $input.first().json.output || '';\nconst telegramInput = $('Telegram Trigger').first().json.message || {};\nconst chatId = telegramInput.chat?.id;\nconst messageId = telegramInput.message_id;\n\n// Match JSON action block\nconst actionRegex = /```(?:json:invoice_action|json)\\s*([\\s\\S]*?)\\s*```/;\nconst match = rawOutput.match(actionRegex);\n\nif (match) {\n  try {\n    const data = JSON.parse(match[1]);\n    const cleanMessage = rawOutput.replace(actionRegex, '').trim();\n    const action = data.action || 'chat';\n\n    if (action === 'create_invoice' && data.clientName && data.amount) {\n      const today = $now.setZone('Europe/Berlin').toFormat('yyyy-MM-dd');\n      const due = $now.setZone('Europe/Berlin').plus({ days: 14 }).toFormat('yyyy-MM-dd');\n      \n      let symbol = data.currencySymbol || '€';\n      const curr = (data.currency || 'EUR').toUpperCase();\n      if (curr === 'USD') symbol = '$';\n      if (curr === 'TRY') symbol = '₺';\n      if (curr === 'GBP') symbol = '£';\n      if (curr === 'EUR') symbol = '€';\n\n      return [{\n        json: {\n          action: 'create_invoice',\n          chatId,\n          messageId,\n          replyText: cleanMessage,\n          clientName: data.clientName,\n          clientAddress: data.clientAddress || '',\n          description: data.description || 'Professional Services',\n          amount: Number(data.amount) || 0,\n          currency: curr,\n          currencySymbol: symbol,\n          invoiceDate: data.invoiceDate || today,\n          dueDate: data.dueDate || due,\n          invoiceNumber: data.invoiceNumber || `INV-${$now.setZone('Europe/Berlin').toFormat('yyyyMMdd')}-01`,\n          notes: data.notes || 'Payment due within 14 days of invoice date.'\n        }\n      }];\n    }\n  } catch (e) {\n    // JSON parsing fallback\n  }\n}\n\n// Conversational reply or asking for missing details\nreturn [{\n  json: {\n    action: 'chat',\n    chatId,\n    messageId,\n    replyText: rawOutput\n  }\n}];"
+      },
+      "id": "parse-invoice-intent",
+      "name": "Parse AI Intent & Action",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "chat",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "create_invoice",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        }
+      },
+      "id": "route-by-action",
+      "name": "Route by Action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.replyText }}",
+        "additionalFields": {}
+      },
+      "id": "send-telegram-reply",
+      "name": "Send Telegram Clarification Reply",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1160,
+        180
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "CONFIGURE_TELEGRAM_INVOICE_BOT",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// =========================================================================\n// 🏢 INVOICER & BANK TRANSFER DETAILS (Edit these anytime!)\n// =========================================================================\nconst INVOICER_CONFIG = {\n  name: 'Serhat Kumas',\n  title: 'Software Engineer & AI Consultant',\n  company: 'Serhat Kumas Consulting',\n  email: 'serhat.kumas.SK@gmail.com',\n  address: 'Berlin, Germany',\n  taxId: 'DE123456789', // Editable Tax / VAT ID\n  \n  // 💳 Bank Transfer & IBAN Details (Editable placeholders)\n  bankName: 'Deutsche Bank / N26',\n  accountHolder: 'Serhat Kumas',\n  iban: 'DE89 3704 0044 0532 0130 00',\n  bic: 'DBBTTDDBXXX',\n  paymentTerms: 'Please transfer to the IBAN above within 14 days. Reference invoice number.'\n};\n\nconst input = $input.first().json;\nconst invoiceNumber = input.invoiceNumber || `INV-${$now.setZone('Europe/Berlin').toFormat('yyyyMMdd')}-01`;\nconst invoiceDate = input.invoiceDate || $now.setZone('Europe/Berlin').toFormat('yyyy-MM-dd');\nconst dueDate = input.dueDate || $now.setZone('Europe/Berlin').plus({ days: 14 }).toFormat('yyyy-MM-dd');\nconst clientName = input.clientName || 'Client Company';\nconst clientAddress = input.clientAddress || 'Client Location';\nconst rawDescription = input.description || 'Professional Consulting Services';\nconst amount = Number(input.amount) || 0;\nconst currency = input.currency || 'EUR';\nconst currencySymbol = input.currencySymbol || '€';\nconst chatId = input.chatId;\n\n// =========================================================================\n// 📄 HIGH-QUALITY VECTOR PDF-1.4 GENERATOR ENGINE (Pure JavaScript)\n// =========================================================================\nfunction sanitizeForPdf(str) {\n  if (!str) return '';\n  return String(str)\n    .replace(/[şŞ]/g, s => s === 'ş' ? 's' : 'S')\n    .replace(/[çÇ]/g, c => c === 'ç' ? 'c' : 'C')\n    .replace(/[ğĞ]/g, g => g === 'ğ' ? 'g' : 'G')\n    .replace(/[ıİ]/g, i => i === 'ı' ? 'i' : 'I')\n    .replace(/[öÖ]/g, o => o === 'ö' ? 'o' : 'O')\n    .replace(/[üÜ]/g, u => u === 'ü' ? 'u' : 'U')\n    .replace(/[^\\x20-\\x7E]/g, ' ')\n    .replace(/\\\\/g, '\\\\\\\\')\n    .replace(/\\(/g, '\\\\(')\n    .replace(/\\)/g, '\\\\)');\n}\n\nfunction wrapText(str, maxChars = 44) {\n  const words = String(str || '').split(' ');\n  const lines = [];\n  let currentLine = '';\n  for (const word of words) {\n    if ((currentLine + ' ' + word).trim().length <= maxChars) {\n      currentLine = (currentLine + ' ' + word).trim();\n    } else {\n      if (currentLine) lines.push(currentLine);\n      currentLine = word;\n    }\n  }\n  if (currentLine) lines.push(currentLine);\n  return lines;\n}\n\nfunction buildInvoicePdf() {\n  const objects = [];\n  function addObject(content) {\n    objects.push(content);\n    return objects.length;\n  }\n\n  // 1: Catalog\n  addObject('<< /Type /Catalog /Pages 2 0 R >>');\n  // 2: Pages\n  addObject('<< /Type /Pages /Kids [3 0 R] /Count 1 >>');\n  // 3: Page (A4 standard: 595.28 x 841.89 points)\n  addObject('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Contents 4 0 R /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> >>');\n\n  let stream = '';\n  function rect(x, y, w, h, fillR, fillG, fillB) {\n    stream += `${fillR} ${fillG} ${fillB} rg ${x} ${y} ${w} ${h} re f\\n`;\n  }\n  function strokeRect(x, y, w, h, r, g, b, lineWidth = 1) {\n    stream += `${lineWidth} w ${r} ${g} ${b} RG ${x} ${y} ${w} ${h} re S\\n`;\n  }\n  function line(x1, y1, x2, y2, r, g, b, lineWidth = 1) {\n    stream += `${lineWidth} w ${r} ${g} ${b} RG ${x1} ${y1} m ${x2} ${y2} l S\\n`;\n  }\n  function text(font, size, x, y, str, r = 0, g = 0, b = 0) {\n    const cleanStr = sanitizeForPdf(str);\n    stream += `BT /${font} ${size} Tf ${r} ${g} ${b} rg 1 0 0 1 ${x} ${y} Tm (${cleanStr}) Tj ET\\n`;\n  }\n\n  // Header Banner (Executive Navy)\n  rect(0, 740, 595.28, 102, 0.08, 0.12, 0.22);\n  rect(0, 737, 595.28, 3, 0.2, 0.5, 0.9); // Cyan accent bar\n\n  // Header Title & Subtitle\n  text('F2', 28, 45, 792, 'INVOICE', 1, 1, 1);\n  text('F1', 10, 45, 772, 'Official Payment Request & Service Statement', 0.75, 0.82, 0.95);\n\n  // Invoice Number & Dates (Top Right Header)\n  text('F2', 12, 385, 802, invoiceNumber, 1, 1, 1);\n  text('F1', 10, 385, 784, `Invoice Date: ${invoiceDate}`, 0.85, 0.9, 0.98);\n  text('F1', 10, 385, 767, `Due Date:     ${dueDate}`, 0.98, 0.82, 0.82);\n\n  // Billed From (Invoicer Card)\n  rect(45, 625, 240, 95, 0.97, 0.98, 1.0);\n  strokeRect(45, 625, 240, 95, 0.84, 0.88, 0.94, 1);\n  text('F2', 9, 58, 703, 'BILLED FROM (ISSUER)', 0.35, 0.42, 0.55);\n  text('F2', 12, 58, 686, INVOICER_CONFIG.name, 0.1, 0.15, 0.25);\n  text('F1', 9.5, 58, 670, INVOICER_CONFIG.title, 0.35, 0.4, 0.5);\n  text('F1', 9.5, 58, 654, INVOICER_CONFIG.address, 0.35, 0.4, 0.5);\n  text('F1', 9.5, 58, 638, INVOICER_CONFIG.email, 0.15, 0.45, 0.8);\n\n  // Billed To (Client Card)\n  rect(310, 625, 240, 95, 0.97, 0.98, 1.0);\n  strokeRect(310, 625, 240, 95, 0.84, 0.88, 0.94, 1);\n  text('F2', 9, 323, 703, 'BILLED TO (CLIENT)', 0.35, 0.42, 0.55);\n  text('F2', 13, 323, 684, clientName, 0.1, 0.15, 0.25);\n  if (clientAddress) {\n    text('F1', 9.5, 323, 668, clientAddress, 0.35, 0.4, 0.5);\n  }\n  text('F1', 9.5, 323, 652, 'Status: Payment Pending', 0.85, 0.4, 0.1);\n  text('F1', 9.5, 323, 636, 'Payment Terms: Net 14 Days', 0.35, 0.4, 0.5);\n\n  // Table Header Bar\n  rect(45, 555, 505, 30, 0.15, 0.22, 0.35);\n  text('F2', 10, 60, 567, 'SERVICE / ITEM DESCRIPTION', 1, 1, 1);\n  text('F2', 10, 360, 567, 'QTY', 1, 1, 1);\n  text('F2', 10, 420, 567, 'UNIT PRICE', 1, 1, 1);\n  text('F2', 10, 495, 567, 'AMOUNT', 1, 1, 1);\n\n  // Clean Word-Wrapping & Dynamic Row Calculation\n  const descLines = wrapText(rawDescription, 44);\n  const lineCount = Math.min(descLines.length, 3);\n  const rowHeight = Math.max(60, 30 + (lineCount * 14));\n  const rowBottom = 555 - rowHeight;\n\n  // Table Row background & border\n  rect(45, rowBottom, 505, rowHeight, 1, 1, 1);\n  strokeRect(45, rowBottom, 505, rowHeight, 0.86, 0.89, 0.94, 1);\n\n  // Vertical column dividers to guarantee zero overlap and maximum readability\n  line(345, rowBottom, 345, 555, 0.9, 0.92, 0.96, 1);\n  line(405, rowBottom, 405, 555, 0.9, 0.92, 0.96, 1);\n  line(480, rowBottom, 480, 555, 0.9, 0.92, 0.96, 1);\n\n  // Render Description Lines cleanly\n  const startDescY = 555 - 18;\n  for (let i = 0; i < lineCount; i++) {\n    text('F2', 10, 58, startDescY - (i * 14), descLines[i], 0.1, 0.15, 0.25);\n  }\n  if (lineCount === 1) {\n    text('F1', 8.5, 58, startDescY - 15, 'Professional Services Rendered as agreed', 0.45, 0.5, 0.6);\n  }\n\n  // Centered numbers vertically in row\n  const midY = rowBottom + (rowHeight / 2) - 4;\n  text('F1', 10, 368, midY, '1', 0.2, 0.25, 0.35);\n  text('F1', 10, 415, midY, `${amount.toFixed(2)} ${currency}`, 0.2, 0.25, 0.35);\n  text('F2', 10.5, 490, midY, `${amount.toFixed(2)} ${currency}`, 0.1, 0.15, 0.25);\n\n  // Subtotal & Total Summary Box (placed relative to rowBottom)\n  const summaryTop = rowBottom - 12;\n  const summaryHeight = 80;\n  rect(340, summaryTop - summaryHeight, 210, summaryHeight, 0.97, 0.98, 1.0);\n  strokeRect(340, summaryTop - summaryHeight, 210, summaryHeight, 0.84, 0.88, 0.94, 1);\n  text('F1', 9.5, 355, summaryTop - 22, 'Subtotal:', 0.35, 0.4, 0.5);\n  text('F1', 10, 465, summaryTop - 22, `${amount.toFixed(2)} ${currency}`, 0.1, 0.15, 0.25);\n  text('F1', 9.5, 355, summaryTop - 42, 'Tax / VAT (0%):', 0.35, 0.4, 0.5);\n  text('F1', 10, 465, summaryTop - 42, `0.00 ${currency}`, 0.1, 0.15, 0.25);\n  line(355, summaryTop - 50, 535, summaryTop - 50, 0.82, 0.86, 0.92, 1);\n  text('F2', 12, 355, summaryTop - 68, 'TOTAL DUE:', 0.08, 0.12, 0.22);\n  text('F2', 13, 455, summaryTop - 68, `${amount.toFixed(2)} ${currency}`, 0.08, 0.5, 0.25);\n\n  // Bank & Payment Details Box (Placed relative to summary box)\n  const bankTop = summaryTop - summaryHeight - 12;\n  const bankHeight = 125;\n  rect(45, bankTop - bankHeight, 505, bankHeight, 0.96, 0.97, 0.99);\n  strokeRect(45, bankTop - bankHeight, 505, bankHeight, 0.82, 0.86, 0.92, 1);\n  rect(45, bankTop - 26, 505, 26, 0.88, 0.92, 0.98);\n  text('F2', 10.5, 60, bankTop - 17, 'BANK TRANSFER & PAYMENT DETAILS', 0.15, 0.22, 0.38);\n  \n  text('F2', 9.5, 60, bankTop - 44, 'Bank Name:', 0.3, 0.35, 0.45);\n  text('F1', 10, 170, bankTop - 44, INVOICER_CONFIG.bankName, 0.1, 0.15, 0.25);\n  \n  text('F2', 9.5, 60, bankTop - 64, 'Account Holder:', 0.3, 0.35, 0.45);\n  text('F1', 10, 170, bankTop - 64, INVOICER_CONFIG.accountHolder, 0.1, 0.15, 0.25);\n  \n  text('F2', 9.5, 60, bankTop - 84, 'IBAN:', 0.3, 0.35, 0.45);\n  text('F2', 10.5, 170, bankTop - 84, INVOICER_CONFIG.iban, 0.08, 0.35, 0.75);\n  \n  text('F2', 9.5, 60, bankTop - 104, 'BIC / SWIFT:', 0.3, 0.35, 0.45);\n  text('F1', 10, 170, bankTop - 104, INVOICER_CONFIG.bic, 0.1, 0.15, 0.25);\n  \n  text('F2', 9.5, 60, bankTop - 120, 'Tax / VAT ID:', 0.3, 0.35, 0.45);\n  text('F1', 9.5, 170, bankTop - 120, INVOICER_CONFIG.taxId, 0.1, 0.15, 0.25);\n\n  // Footer Terms & Notes\n  const footerY = bankTop - bankHeight - 14;\n  line(45, footerY, 550, footerY, 0.88, 0.9, 0.94, 1);\n  text('F2', 9.5, 45, footerY - 16, 'Payment Terms & Notes:', 0.25, 0.3, 0.4);\n  text('F1', 9, 45, footerY - 30, INVOICER_CONFIG.paymentTerms, 0.4, 0.45, 0.55);\n  text('F1', 9, 45, footerY - 44, 'Thank you for your business! For questions, contact ' + INVOICER_CONFIG.email, 0.4, 0.45, 0.55);\n\n  // Subtle Bottom Signature\n  text('F1', 8, 180, 25, 'Official Invoice generated on behalf of Serhat Kumas', 0.6, 0.65, 0.75);\n\n  // 4: Content Stream Length & Endstream\n  const streamLength = Buffer.byteLength(stream, 'binary');\n  addObject(`<< /Length ${streamLength} >>\\nstream\\n${stream}endstream`);\n\n  // 5: Font F1 (Helvetica standard)\n  addObject('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');\n  // 6: Font F2 (Helvetica-Bold standard)\n  addObject('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>');\n\n  // Construct PDF structure\n  let pdf = '%PDF-1.4\\n';\n  const xrefOffsets = [0];\n  let currentOffset = Buffer.byteLength(pdf, 'binary');\n\n  for (let i = 0; i < objects.length; i++) {\n    xrefOffsets.push(currentOffset);\n    const objStr = `${i + 1} 0 obj\\n${objects[i]}\\nendobj\\n`;\n    pdf += objStr;\n    currentOffset += Buffer.byteLength(objStr, 'binary');\n  }\n\n  const xrefStart = currentOffset;\n  pdf += `xref\\n0 ${objects.length + 1}\\n0000000000 65535 f \\n`;\n  for (let i = 1; i <= objects.length; i++) {\n    pdf += String(xrefOffsets[i]).padStart(10, '0') + ' 00000 n \\n';\n  }\n\n  pdf += `trailer\\n<< /Size ${objects.length + 1} /Root 1 0 R >>\\nstartxref\\n${xrefStart}\\n%%EOF\\n`;\n  return Buffer.from(pdf, 'binary');\n}\n\nconst pdfBuffer = buildInvoicePdf();\nconst pdfBase64 = pdfBuffer.toString('base64');\nconst safeFileName = `Invoice_${invoiceNumber}_${clientName.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;\n\nreturn [{\n  json: {\n    clientName,\n    invoiceNumber,\n    invoiceDate,\n    dueDate,\n    amount,\n    currency,\n    currencySymbol,\n    description: rawDescription,\n    chatId,\n    fileName: safeFileName,\n    invoicer: INVOICER_CONFIG\n  },\n  binary: {\n    data: {\n      data: pdfBase64,\n      mimeType: 'application/pdf',\n      fileName: safeFileName,\n      fileExtension: 'pdf'\n    }\n  }\n}];"
+      },
+      "id": "generate-pdf-invoice",
+      "name": "Generate PDF Invoice",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1160,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "fileContent": "data",
+        "name": "={{ $json.fileName }}",
+        "options": {}
+      },
+      "id": "upload-google-drive",
+      "name": "Upload to Google Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1420,
+        420
+      ],
+      "credentials": {
+        "googleDriveOAuth2": {
+          "id": "CONFIGURE_GOOGLE_DRIVE_CREDENTIAL",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const driveData = $input.first().json;\nconst invoiceNode = $('Generate PDF Invoice').first();\nconst driveLink = driveData.webViewLink || driveData.webContentLink || (driveData.id ? `https://drive.google.com/file/d/${driveData.id}/view` : '#');\n\nreturn [{\n  json: {\n    ...invoiceNode.json,\n    driveLink\n  },\n  binary: {\n    data: invoiceNode.binary.data\n  }\n}];"
+      },
+      "id": "prepare-dispatch",
+      "name": "Prepare Dispatch Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.invoicer.email || 'serhat.kumas.SK@gmail.com' }}",
+        "subject": "=📄 Invoice Generated: {{ $json.invoiceNumber }} — {{ $json.clientName }}",
+        "message": "=<h3>📄 New Invoice Generated & Archived</h3>\n<p>Hello <b>Serhat</b>,</p>\n<p>A new invoice has been generated according to your Telegram request:</p>\n<ul>\n  <li><b>Invoice Number:</b> {{ $json.invoiceNumber }}</li>\n  <li><b>Client:</b> {{ $json.clientName }}</li>\n  <li><b>Amount:</b> {{ $json.amount }} {{ $json.currencySymbol }} ({{ $json.currency }})</li>\n  <li><b>Date:</b> {{ $json.invoiceDate }}</li>\n  <li><b>Due Date:</b> {{ $json.dueDate }}</li>\n  <li><b>Service Description:</b> {{ $json.description }}</li>\n</ul>\n<p>The PDF invoice is attached to this email and safely backed up to your Google Drive.</p>\n<p>🔗 <a href=\"{{ $json.driveLink }}\">View in Google Drive</a></p>\n<br/>\n<p>Best regards,<br/><b>Your Personal AI Financial Assistant</b></p>",
+        "options": {
+          "attachmentsUi": {
+            "attachmentsBinary": [
+              {
+                "property": "data"
+              }
+            ]
+          }
+        }
+      },
+      "id": "dispatch-gmail",
+      "name": "Dispatch via Gmail",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1940,
+        320
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "CONFIGURE_GMAIL_CREDENTIAL",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "sendDocument",
+        "chatId": "={{ $json.chatId }}",
+        "binaryData": true,
+        "binaryPropertyName": "data",
+        "additionalFields": {
+          "caption": "=✅ <b>Invoice Generated Successfully!</b>\n\n📄 <b>Invoice:</b> {{ $json.invoiceNumber }}\n🏢 <b>Client:</b> {{ $json.clientName }}\n💰 <b>Total Due:</b> {{ $json.amount }} {{ $json.currencySymbol }} ({{ $json.currency }})\n📅 <b>Invoice Date:</b> {{ $json.invoiceDate }}\n⏳ <b>Due Date:</b> {{ $json.dueDate }}\n📝 <b>Service:</b> {{ $json.description }}\n\n☁️ <b>Google Drive:</b> <a href=\"{{ $json.driveLink }}\">Open in Google Drive</a>\n✉️ <i>A copy with the PDF attached has also been sent to your Gmail!</i>\n\n👇 <i>PDF document attached below for instant 1-tap forwarding:</i>",
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "send-telegram-pdf",
+      "name": "Send PDF Document to Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1940,
+        520
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "CONFIGURE_TELEGRAM_INVOICE_BOT",
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "AI Invoice Assistant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Invoice Assistant",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Window Buffer Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Invoice Assistant",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Invoice Assistant": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Intent & Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Intent & Action": {
+      "main": [
+        [
+          {
+            "node": "Route by Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Action": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Clarification Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Generate PDF Invoice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate PDF Invoice": {
+      "main": [
+        [
+          {
+            "node": "Upload to Google Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload to Google Drive": {
+      "main": [
+        [
+          {
+            "node": "Prepare Dispatch Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Dispatch Payload": {
+      "main": [
+        [
+          {
+            "node": "Dispatch via Gmail",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send PDF Document to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Berlin"
+  }
+}

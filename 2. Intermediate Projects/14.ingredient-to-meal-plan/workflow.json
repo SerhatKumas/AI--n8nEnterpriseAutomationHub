@@ -1,0 +1,374 @@
+{
+  "name": "Project 14 : Ingredient to Meal Plan & Recipe Generator (PDF & AI)",
+  "nodes": [
+    {
+      "id": "123daa29-3880-4b9c-93f6-bdec072247f7",
+      "name": "Telegram Trigger (Chat & Buttons)",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        200,
+        300
+      ],
+      "parameters": {
+        "updates": [
+          "message",
+          "callback_query"
+        ]
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "mealPlanGeneratorBot",
+          "name": "Meal Plan Generator Bot"
+        }
+      },
+      "webhookId": "p14-meal-plan-generator-telegram-trigger"
+    },
+    {
+      "id": "a07fd01b-8d8b-4257-b600-a9fb5987955b",
+      "name": "Conversation & State Router",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        300
+      ],
+      "parameters": {
+        "jsCode": "\nfunction fixTurkishMojibake(str) {\n  if (!str) return \"\";\n  return String(str)\n    // GBK/CP936 Mojibake mapping (common in some LLM tokenizers when generating Turkish in JSON mode)\n    .replace(/脺/g, 'Ü').replace(/脰/g, 'Ö').replace(/脟/g, 'Ç').replace(/艧/g, 'ş').replace(/艦/g, 'Ş')\n    .replace(/莽/g, 'ç').replace(/臒/g, 'ğ').replace(/臑/g, 'Ğ').replace(/眉/g, 'ü').replace(/枚/g, 'ö')\n    .replace(/谋/g, 'ı').replace(/陌/g, 'İ')\n    // Latin-1 / Windows-1252 Mojibake mapping\n    .replace(/Ã¼/g, 'ü').replace(/Ãœ/g, 'Ü').replace(/Ã¶/g, 'ö').replace(/Ã–/g, 'Ö')\n    .replace(/Ã§/g, 'ç').replace(/Ã‡/g, 'Ç').replace(/ÄŸ/g, 'ğ').replace(/Äž/g, 'Ğ')\n    .replace(/Ä±/g, 'ı').replace(/Ä°/g, 'İ').replace(/ÅŸ/g, 'ş').replace(/Åž/g, 'Ş');\n}\nconst input = $input.first()?.json || {};\nconst BOT_TOKEN = \"YOUR_TELEGRAM_BOT_TOKEN\";\n\nconst sendTg = async (chatId, text, replyMarkup = null) => {\n  const payload = { chat_id: chatId, text, parse_mode: \"HTML\" };\n  if (replyMarkup) payload.reply_markup = replyMarkup;\n  try {\n    await this.helpers.httpRequest({\n      method: \"POST\",\n      url: `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,\n      headers: { \"Content-Type\": \"application/json\" },\n      body: payload,\n      json: true\n    });\n  } catch(e) {\n    console.error(\"sendTg error:\", e.message || e);\n  }\n};\n\nconst answerCallback = async (callbackQueryId, text = \"\") => {\n  try {\n    await this.helpers.httpRequest({\n      method: \"POST\",\n      url: `https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`,\n      headers: { \"Content-Type\": \"application/json\" },\n      body: { callback_query_id: callbackQueryId, text },\n      json: true\n    });\n  } catch(e) {}\n};\n\n// ========================================================\n// 1. Check Callback Query (Button Clicks)\n// ========================================================\nif (input.callback_query) {\n  const cb = input.callback_query;\n  const chatId = String(cb.message?.chat?.id || cb.from?.id);\n  const data = String(cb.data || \"\");\n  const msgText = String(cb.message?.text || \"\");\n\n  // A. User accepts recipes\n  if (data === \"p14_accept\") {\n    await answerCallback(cb.id, \"Afiyet olsun! 👨‍🍳\");\n    await sendTg(chatId, `👨‍🍳 <b>Afiyet olsun!</b>\\n\\nHarika bir sofra, lezzetli ve keyifli bir yemek dilerim! <b>Bon appétit!</b> 🍽️✨\\n\\n💡 <i>Farklı bir zamanda elinizdeki yeni malzemelerle tarif üretmek için buzdolabınızın fotoğrafını gönderebilir veya yeni malzeme listenizi yazabilirsiniz.</i>`);\n    return [];\n  }\n\n  // B. User requests 3 alternatives\n  if (data === \"p14_more\") {\n    await answerCallback(cb.id, \"Yeni alternatifler hazırlanıyor... 🔄\");\n    \n    // Extract ingredients from the recipe message\n    let ingredients = \"\";\n    const ingMatch = msgText.match(/(?:🧺|Malzemeler:)[\\s\\n*]*([^\\n\\r]+)/i);\n    if (ingMatch) {\n      ingredients = fixTurkishMojibake(ingMatch[1].replace(/^[^\\w\\sğüşöçıİĞÜŞÖÇ]+/, '').trim());\n    }\n    \n    // Extract previous recipe titles to exclude\n    const titles = [...msgText.matchAll(/(?:[1-3]️⃣|\\b[1-3]\\.|\\bTarif [1-3]:)\\s*([^\\n\\r]+)/g)].map(m => fixTurkishMojibake(m[1].trim()));\n    const hasPantry = !msgText.includes(\"Sadece belirtilen malzemeler\") && !msgText.includes(\"Sadece fotoğraftaki\");\n\n    if (!ingredients) {\n      await sendTg(chatId, `⚠️ <i>Kayıtlı malzeme bilgisi okunamadı. Lütfen mutfağınızdaki malzemeleri yazarak veya buzdolabınızın fotoğrafını göndererek yeni bir arama başlatın.</i>`);\n      return [];\n    }\n\n    const previousList = titles.length > 0 ? titles.map(t => '• ' + t).join('\\n') : '• Önceki öneriler';\n    await sendTg(chatId, `🔄 <b>Farklı 3 Tarif Hazırlanıyor...</b>\\n━━━━━━━━━━━━━━━━━━━━\\n🧺 <b>Malzemeler:</b> ${ingredients}\\n🚫 <i>Daha önce önerilen tarifler hariç tutuluyor:</i>\\n${previousList}\\n\\n⏳ <i>Lütfen bekleyin, şefimiz yepyeni alternatifler hazırlıyor...</i>`);\n\n    return [{\n      json: {\n        mode: \"meal\",\n        chatId,\n        ingredients,\n        hasPantry,\n        previousRecipes: titles,\n        isAlternative: true\n      }\n    }];\n  }\n\n  // C. User answers pantry question (Yes or No)\n  if (data === \"p14_pantry_yes\" || data === \"p14_pantry_no\") {\n    const hasPantry = (data === \"p14_pantry_yes\");\n    await answerCallback(cb.id, \"Şef tarifleri hazırlıyor... 👨‍🍳\");\n\n    // Extract ingredients from the bot's question message (handles text or photo-detected)\n    let ingredients = \"\";\n    const match = msgText.match(/(?:🧺 Kayıtlı Malzemeler:|📝 Malzemeleriniz Alındı:|📝 Fotoğraftan Tespit Edilen Malzemeler:|📸 Fotoğraftan Tespit Edilen Malzemeler:)[\\s\\n]*([\\s\\S]+?)(?:\\n\\nPeki mutfağınızda|\\n\\n🧂|$)/i);\n    if (match) {\n      ingredients = fixTurkishMojibake(match[1].replace(/<\\/?code>/gi, '').trim());\n    }\n\n    if (!ingredients) {\n      await sendTg(chatId, `⚠️ <i>Malzeme bilgisi okunamadı. Lütfen mutfağınızdaki malzemeleri yazarak veya buzdolabınızın fotoğrafını göndererek yeni bir arama başlatın.</i>`);\n      return [];\n    }\n\n    const pantryDesc = hasPantry \n      ? \"✅ <b>Temel kiler malzemeleri dahil</b> (Tuz, yağ, un, baharat vb.)\" \n      : \"🚫 <b>Sadece belirtilen / fotoğraftaki malzemelerle sınırlı</b>\";\n\n    await sendTg(chatId, `👨‍🍳 <b>Şef Mutfağa Girdi!</b>\\n━━━━━━━━━━━━━━━━━━━━\\n🧺 <b>Malzemeler:</b> ${ingredients}\\n🧂 <b>Kiler Durumu:</b> ${pantryDesc}\\n\\n⏳ <i>Yapay zeka şefimiz elinizdeki malzemeleri analiz ediyor ve 3 özel tarif hazırlıyor... Lütfen birkaç saniye bekleyin.</i>`);\n\n    return [{\n      json: {\n        mode: \"meal\",\n        chatId,\n        ingredients,\n        hasPantry,\n        previousRecipes: [],\n        isAlternative: false\n      }\n    }];\n  }\n\n  await answerCallback(cb.id);\n  return [];\n}\n\n// ========================================================\n// 2. Check Standard Message (Photo or Text)\n// ========================================================\nconst msg = input.message;\nif (!msg) return [];\n\nconst chatId = String(msg.chat?.id || msg.from?.id);\n\n// A. USER SENDS A PHOTO OF FRIDGE OR PANTRY! 📸\nconst hasPhoto = (msg.photo && msg.photo.length > 0) || (msg.document && msg.document.mime_type && msg.document.mime_type.startsWith('image/'));\n\nif (hasPhoto) {\n  await sendTg(chatId, `📸 <b>Buzdolabı fotoğrafınız alındı!</b>\\n<i>Şefimiz fotoğrafı inceliyor ve içerideki malzemeleri tespit ediyor, lütfen birkaç saniye bekleyin...</i> 🔍`);\n\n  let fileId = \"\";\n  if (msg.photo && msg.photo.length > 0) {\n    const largestPhoto = msg.photo[msg.photo.length - 1];\n    fileId = largestPhoto.file_id || largestPhoto;\n  } else if (msg.document) {\n    fileId = msg.document.file_id;\n  }\n\n  try {\n    const fileRes = await this.helpers.httpRequest({\n      method: \"GET\",\n      url: `https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${fileId}`,\n      json: true\n    });\n\n    const filePath = fileRes?.result?.file_path;\n    if (!filePath) throw new Error(\"Dosya yolu Telegram API'den alınamadı.\");\n\n    const photoBuf = await this.helpers.httpRequest({\n      method: \"GET\",\n      url: `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`,\n      encoding: \"arraybuffer\",\n      timeout: 30000\n    });\n\n    const imageB64 = Buffer.from(photoBuf).toString(\"base64\");\n\n    const userCaption = msg.caption ? String(msg.caption).trim() : \"\";\n\n    let promptText = \"Bu bir buzdolabı, kiler veya mutfak tezgahı fotoğrafıdır. Fotoğrafta net olarak görünen ve ayırt edilebilen tüm yenilebilir gıda maddelerini, sebzeleri, meyveleri, süt ürünlerini, et/tavuk ürünlerini, sosları ve mutfak malzemelerini tespit et.\\n\\nKURALLAR:\\n1. SADECE fotoğrafta gerçekten var olan malzemeleri yaz.\\n2. Malzemeleri Türkçe, sade ve virgülle ayrılmış tek bir liste olarak döndür (Örn: 'yumurta, süt, domates, kaşar peyniri, salatalık, yoğurt, tereyağı').\\n3. Marka adları, paket detayları veya gereksiz sıfatlar ekleme; sadece malzeme adını yaz.\\n4. Eğer fotoğrafta hiçbir yiyecek veya mutfak malzemesi görünmüyorsa sadece 'YOK' yaz.\\n5. Yanıtında hiçbir markdown, başlık, madde işareti veya selamlama olmasın; sadece ve sadece virgülle ayrılmış malzeme isimleri olsun.\";\n    if (userCaption) {\n      promptText += `\\nKullanıcının fotoğrafla birlikte eklediği ek not: \"${userCaption}\". Eğer kullanıcı fotoğrafta görünmeyen ek malzemeler belirtmişse onları da listeye dahil et.`;\n    }\n\n    return [{\n      json: {\n        mode: \"photo\",\n        chatId,\n        geminiVisionBody: {\n          contents: [\n            {\n              role: \"user\",\n              parts: [\n                { text: promptText },\n                {\n                  inlineData: {\n                    mimeType: \"image/jpeg\",\n                    data: imageB64\n                  }\n                }\n              ]\n            }\n          ],\n          generationConfig: {\n            temperature: 0.2,\n            maxOutputTokens: 300\n          }\n        }\n      }\n    }];\n  } catch(e) {\n    console.error(\"Photo download error:\", e.message || e);\n    await sendTg(chatId, `⚠️ <i>Fotoğraf işlenirken hata oluştu (${e.message || e}). Lütfen tekrar deneyin ya da malzemelerinizi metin olarak yazın (Örn: <code>tavuk, mantar, krema</code>).</i>`);\n    return [];\n  }\n}\n\n// B. USER SENDS TEXT COMMAND OR INGREDIENT LIST\nif (!msg.text) return [];\n\nconst text = fixTurkishMojibake(String(msg.text).trim());\nconst lower = text.toLowerCase();\n\n// Commands (/start, /help, /yardim)\nif (lower === \"/start\" || lower === \"/yardim\" || lower === \"/yeni\" || lower === \"yardım\" || lower === \"başla\") {\n  await sendTg(chatId, `👋 <b>Akıllı Mutfak Şefine Hoş Geldiniz!</b> 👨‍🍳\\n━━━━━━━━━━━━━━━━━━━━\\nNe pişireceğinizi düşünmek zorunda değilsiniz. Mutfağınızdaki malzemelerle saniyeler içinde <b>3 pratik ve lezzetli tarif</b> çıkarayım!\\n\\n📌 <b>Nasıl Kullanılır?</b>\\n1️⃣ <b>Fotoğraf Gönderin:</b> Buzdolabınızın veya tezgahınızın fotoğrafını doğrudan bana gönderin 📸. Yapay zeka şefimiz malzemeleri anında tespit etsin!\\n2️⃣ <b>Veya Yazarak Gönderin:</b> Elinizdeki malzemeleri tek bir mesajda yazın:\\n👉 <i>Örnek 1:</i> <code>tavuk göğsü, mantar, krema</code>\\n👉 <i>Örnek 2:</i> <code>yumurta, patates, kaşar, domates</code>\\n👉 <i>Örnek 3:</i> <code>kıyma, soğan, un, yoğurt</code>\\n\\nArdından temel kiler malzemeleri durumunu onayladığınızda, tarifleriniz hem mesaj hem de şık bir <b>PDF Tarif Kartı</b> olarak iletilecek! 📜🍳`);\n  return [];\n}\n\n// User sent ingredients via text!\nconst replyMarkup = {\n  inline_keyboard: [\n    [\n      { text: \"🧂 Temel kiler malzemeleri de var\", callback_data: \"p14_pantry_yes\" }\n    ],\n    [\n      { text: \"🚫 Sadece yazdığım malzemeler var\", callback_data: \"p14_pantry_no\" }\n    ]\n  ]\n};\n\nawait sendTg(chatId, `📝 <b>Malzemeleriniz Alındı:</b>\\n<code>${text}</code>\\n\\nPeki mutfağınızda <b>tuz, karabiber, sıvı yağ/tereyağı, un, salça, su</b> gibi temel kiler malzemeleri de bulunuyor mu?`, replyMarkup);\n\nreturn [];"
+      }
+    },
+    {
+      "id": "c4fc459e-d194-42f4-801b-9e7d962f8340",
+      "name": "Is Fridge Photo?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        750,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.mode }}",
+              "rightValue": "photo",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "9ed3388e-a124-421b-9e19-4238a762cc8b",
+      "name": "Gemini 3.1: Detect Fridge Ingredients",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1040,
+        160
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.geminiVisionBody) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "googlePalmApi": {
+          "id": "zvLpU1ScjMCeOYQq",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "id": "13b0250f-0c5a-44d4-a24a-7d9ffd99a423",
+      "name": "Send Detected Ingredients with Pantry Buttons",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        160
+      ],
+      "parameters": {
+        "jsCode": "\nfunction fixTurkishMojibake(str) {\n  if (!str) return \"\";\n  return String(str)\n    // GBK/CP936 Mojibake mapping (common in some LLM tokenizers when generating Turkish in JSON mode)\n    .replace(/脺/g, 'Ü').replace(/脰/g, 'Ö').replace(/脟/g, 'Ç').replace(/艧/g, 'ş').replace(/艦/g, 'Ş')\n    .replace(/莽/g, 'ç').replace(/臒/g, 'ğ').replace(/臑/g, 'Ğ').replace(/眉/g, 'ü').replace(/枚/g, 'ö')\n    .replace(/谋/g, 'ı').replace(/陌/g, 'İ')\n    // Latin-1 / Windows-1252 Mojibake mapping\n    .replace(/Ã¼/g, 'ü').replace(/Ãœ/g, 'Ü').replace(/Ã¶/g, 'ö').replace(/Ã–/g, 'Ö')\n    .replace(/Ã§/g, 'ç').replace(/Ã‡/g, 'Ç').replace(/ÄŸ/g, 'ğ').replace(/Äž/g, 'Ğ')\n    .replace(/Ä±/g, 'ı').replace(/Ä°/g, 'İ').replace(/ÅŸ/g, 'ş').replace(/Åž/g, 'Ş');\n}\nconst input = $input.first()?.json || {};\nconst ifNode = $('Is Fridge Photo?').first()?.json || {};\nconst chatId = ifNode.chatId;\nconst BOT_TOKEN = \"YOUR_TELEGRAM_BOT_TOKEN\";\n\nconst sendTg = async (chatId, text, replyMarkup = null) => {\n  const payload = { chat_id: chatId, text, parse_mode: \"HTML\" };\n  if (replyMarkup) payload.reply_markup = replyMarkup;\n  try {\n    await this.helpers.httpRequest({\n      method: \"POST\",\n      url: `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,\n      headers: { \"Content-Type\": \"application/json\" },\n      body: payload,\n      json: true\n    });\n  } catch(e) {\n    console.error(\"sendTg error:\", e.message || e);\n  }\n};\n\nlet rawText = input?.candidates?.[0]?.content?.parts?.[0]?.text || \"\";\nrawText = fixTurkishMojibake(rawText.trim().replace(/^['\"`]+|['\"`]+$/g, '').trim());\n\nif (!rawText || rawText.toUpperCase() === \"YOK\" || rawText.toLowerCase().includes(\"malzeme bulunamadı\") || rawText.toLowerCase().includes(\"tespit edilemedi\")) {\n  await sendTg(chatId, `🔍 <b>Buzdolabı Taraması Tamamlandı</b>\\n━━━━━━━━━━━━━━━━━━━━\\n❌ <i>Fotoğrafta net olarak ayırt edilebilen bir gıda maddesi veya buzdolabı içeriği tespit edilemedi.</i>\\n\\n💡 <b>Şefin Önerisi:</b>\\n• Buzdolabının içini gösteren daha aydınlık ve net bir fotoğraf çekip gönderebilirsiniz 📸\\n• Ya da elinizdeki malzemeleri doğrudan metin olarak yazabilirsiniz (Örn: <code>tavuk, mantar, krema</code>) ✍️`);\n  return [];\n}\n\n// Clean and format ingredients list\nconst cleanIngredients = rawText\n  .split(/[\\n,]+/)\n  .map(s => s.replace(/^[•*\\-\\d.]+\\s*/, '').trim())\n  .filter(s => s.length > 1 && !s.toLowerCase().includes('yok'))\n  .join(', ');\n\nif (!cleanIngredients) {\n  await sendTg(chatId, `❌ <i>Fotoğraftan malzeme listesi çıkarılamadı. Lütfen malzemelerinizi metin olarak yazarak tekrar deneyin.</i>`);\n  return [];\n}\n\nconst replyMarkup = {\n  inline_keyboard: [\n    [\n      { text: \"🧂 Temel kiler malzemeleri de var\", callback_data: \"p14_pantry_yes\" }\n    ],\n    [\n      { text: \"🚫 Sadece fotoğraftaki malzemeler var\", callback_data: \"p14_pantry_no\" }\n    ]\n  ]\n};\n\nawait sendTg(chatId, `📸 <b>Fotoğraftan Tespit Edilen Malzemeler:</b>\\n<code>${cleanIngredients}</code>\\n\\nPeki mutfağınızda <b>tuz, karabiber, sıvı yağ/tereyağı, un, salça, su</b> gibi temel kiler malzemeleri de bulunuyor mu?`, replyMarkup);\n\nreturn [];"
+      }
+    },
+    {
+      "id": "0c181176-d418-4273-8236-0b2524c1343a",
+      "name": "Prepare Gemini Meal Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        440
+      ],
+      "parameters": {
+        "jsCode": "\nfunction fixTurkishMojibake(str) {\n  if (!str) return \"\";\n  return String(str)\n    // GBK/CP936 Mojibake mapping (common in some LLM tokenizers when generating Turkish in JSON mode)\n    .replace(/脺/g, 'Ü').replace(/脰/g, 'Ö').replace(/脟/g, 'Ç').replace(/艧/g, 'ş').replace(/艦/g, 'Ş')\n    .replace(/莽/g, 'ç').replace(/臒/g, 'ğ').replace(/臑/g, 'Ğ').replace(/眉/g, 'ü').replace(/枚/g, 'ö')\n    .replace(/谋/g, 'ı').replace(/陌/g, 'İ')\n    // Latin-1 / Windows-1252 Mojibake mapping\n    .replace(/Ã¼/g, 'ü').replace(/Ãœ/g, 'Ü').replace(/Ã¶/g, 'ö').replace(/Ã–/g, 'Ö')\n    .replace(/Ã§/g, 'ç').replace(/Ã‡/g, 'Ç').replace(/ÄŸ/g, 'ğ').replace(/Äž/g, 'Ğ')\n    .replace(/Ä±/g, 'ı').replace(/Ä°/g, 'İ').replace(/ÅŸ/g, 'ş').replace(/Åž/g, 'Ş');\n}\nconst input = $input.first()?.json || {};\nconst rawIngredients = input.ingredients || \"\";\nconst ingredients = fixTurkishMojibake(rawIngredients);\nconst hasPantry = input.hasPantry !== false;\nconst previousRecipes = (input.previousRecipes || []).map(fixTurkishMojibake);\nconst isAlternative = input.isAlternative === true;\nconst chatId = input.chatId;\n\nconst systemPrompt = `Sen Türkiye'nin en yaratıcı, tecrübeli ve pratik şefisin.\nKullanıcının mutfağında bulunan malzemeleri değerlendirerek evde yapılabilecek en mantıklı, lezzetli ve uygulanabilir 3 farklı yemek tarifi üretirsin.\n\nKRİTİK KURALLAR:\n1. YETERLİLİK KONTROLÜ (isPossible):\n   - Eğer kullanıcının verdiği malzemelerle yenilebilir gerçek bir yemek yapılması mümkün DEĞİLSE (Örn: sadece \"su ve tuz\", veya taş/kağıt gibi yenilemez maddeler, veya tek başına bir yemek oluşturamayacak sadece kimyon gibi baharatlar):\n     \"isPossible\": false yap ve \"reason\" alanına kullanıcının anlayacağı nazik, esprili ve Türkçe bir açıklama yaz (hangi temel gıdayı eklemesi gerektiğini belirt). \"recipes\" dizisini boş bırak.\n   - Ancak basit de olsa temel bir yemek çıkabiliyorsa (Örn: \"un, tuz, su\" varsa lavaş/bazlama/ekmek yapılabilir, \"yumurta ve domates\" varsa menemen yapılabilir): \"isPossible\": true yap.\n   - Eğer kiler malzemeleri mevcutsa (hasPantry: true), evdeki tuz, karabiber, sıvı yağ/zeytinyağı, un, su ve temel baharatların da kullanılabileceğini varsay.\n   - Eğer kiler malzemeleri YOKSA (hasPantry: false), KESİNLİKLE sadece ve sadece kullanıcının yazdığı malzemelerle hazırlanabilecek tarifler üret!\n\n2. 3 FARKLI TARİF:\n   - \"isPossible\": true ise, tam 3 adet farklı konseptte tarif üret (örneğin: 1 ana yemek/tencere yemeği, 1 pratik fırın/tava yemeği, 1 hafif atıştırmalık/meze veya çorba).\n   - Her tarif için:\n     * title: Çekici Türkçe yemek adı (Örn: \"Kremalı Mantarlı Tavuk Sote\")\n     * time: Tahmini hazırlama ve pişirme süresi (Örn: \"25 dk\")\n     * difficulty: Kolay / Orta / Pratik\n     * portions: Porsiyon (Örn: \"2-3 Kişilik\")\n     * calories: Porsiyon başı yaklaşık kalori (Örn: \"380 kcal\")\n     * ingredientsUsed: Kullanılan malzemeler ve yaklaşık ölçüleri dizi olarak\n     * steps: Adım adım, anlaşılır pişirme adımları dizi olarak (en az 4 adım)\n     * chefTip: Yemeği daha lezzetli kılacak şefin püf noktası\n\n3. ALTERNATİF TALEBİ & ÇEŞİTLİLİK:\n   - Eğer önceki tarifler listelenmişse, KESİNLİKLE o tariflerden tamamen farklı yeni 3 alternatif tarif üret.\n\n4. ÇIKTI FORMATI:\n   - SADECE ve SADECE saf JSON üret. Markdown blokları veya ek açıklama yazma.\n   - JSON Şeması:\n   {\n     \"isPossible\": true / false,\n     \"reason\": \"Yetersizse nazik açıklama, yetersiz değilse boş string\",\n     \"recipes\": [\n       {\n         \"title\": \"Yemek Adı\",\n         \"time\": \"25 dk\",\n         \"difficulty\": \"Kolay\",\n         \"portions\": \"2-3 Kişilik\",\n         \"calories\": \"350 kcal\",\n         \"ingredientsUsed\": [\"300g tavuk\", \"1 paket krema\"],\n         \"steps\": [\"Adım 1...\", \"Adım 2...\"],\n         \"chefTip\": \"Püf noktası...\"\n       }\n     ]\n   }\n\n5. DİL VE KODLAMA ZORUNLULUĞU (UTF-8):\n   - TÜM yemek adları, malzeme listeleri, açıklamalar ve adımlar KESİNLİKLE doğru Türkçe karakterlerle (ç, ğ, ı, ö, ş, ü, Ç, Ğ, İ, Ö, Ş, Ü) ve düzgün Türkçe grameriyle yazılmalıdır.\n   - Asla bozuk karakterler, Çince semboller veya yabancı alfabe karakterleri KULLANMA.`;\n\nlet userPrompt = `MUTFAKTAKİ MALZEMELER: ${ingredients}\\n`;\nuserPrompt += `TEMEL KİLER MALZEMELERİ DURUMU (Tuz, Yağ, Un vb.): ${hasPantry ? \"MEVCUT (Kullanılabilir)\" : \"YOK (SADECE verilen malzemeler kullanılabilir)\"}\\n`;\n\nif (isAlternative && previousRecipes.length > 0) {\n  userPrompt += `\\nDAHA ÖNCE ÖNERİLEN TARİFLER (Lütfen bunları önerme, tamamen yeni 3 alternatif sun):\\n`;\n  previousRecipes.forEach(r => { userPrompt += `- ${r}\\n`; });\n}\n\nreturn [{\n  json: {\n    chatId,\n    ingredients,\n    hasPantry,\n    previousRecipes,\n    geminiBody: {\n      contents: [\n        {\n          role: \"user\",\n          parts: [{ text: systemPrompt + \"\\n\\n\" + userPrompt }]\n        }\n      ],\n      generationConfig: {\n        temperature: 0.4,\n        maxOutputTokens: 2500,\n        responseMimeType: \"application/json\"\n      }\n    }\n  }\n}];"
+      }
+    },
+    {
+      "id": "d39ea811-90b9-4f07-89dc-c64859c1e3c7",
+      "name": "Gemini 3.1: Generate Meal Plan",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        440
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.geminiBody) }}",
+        "options": {
+          "timeout": 90000
+        }
+      },
+      "credentials": {
+        "googlePalmApi": {
+          "id": "zvLpU1ScjMCeOYQq",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "id": "ceef3c08-aea9-4bca-98fd-2b2ab99dca16",
+      "name": "Parse Recipes & Check Feasibility",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        440
+      ],
+      "parameters": {
+        "jsCode": "\nfunction fixTurkishMojibake(str) {\n  if (!str) return \"\";\n  return String(str)\n    // GBK/CP936 Mojibake mapping (common in some LLM tokenizers when generating Turkish in JSON mode)\n    .replace(/脺/g, 'Ü').replace(/脰/g, 'Ö').replace(/脟/g, 'Ç').replace(/艧/g, 'ş').replace(/艦/g, 'Ş')\n    .replace(/莽/g, 'ç').replace(/臒/g, 'ğ').replace(/臑/g, 'Ğ').replace(/眉/g, 'ü').replace(/枚/g, 'ö')\n    .replace(/谋/g, 'ı').replace(/陌/g, 'İ')\n    // Latin-1 / Windows-1252 Mojibake mapping\n    .replace(/Ã¼/g, 'ü').replace(/Ãœ/g, 'Ü').replace(/Ã¶/g, 'ö').replace(/Ã–/g, 'Ö')\n    .replace(/Ã§/g, 'ç').replace(/Ã‡/g, 'Ç').replace(/ÄŸ/g, 'ğ').replace(/Äž/g, 'Ğ')\n    .replace(/Ä±/g, 'ı').replace(/Ä°/g, 'İ').replace(/ÅŸ/g, 'ş').replace(/Åž/g, 'Ş');\n}\nconst input = $input.first()?.json || {};\nconst promptNode = $(\"Prepare Gemini Meal Prompt\").first()?.json || {};\nconst chatId = promptNode.chatId;\nconst ingredients = fixTurkishMojibake(promptNode.ingredients);\nconst hasPantry = promptNode.hasPantry;\nconst previousRecipes = (promptNode.previousRecipes || []).map(fixTurkishMojibake);\nconst BOT_TOKEN = \"YOUR_TELEGRAM_BOT_TOKEN\";\n\nconst sendTg = async (chatId, text, replyMarkup = null) => {\n  const payload = { chat_id: chatId, text, parse_mode: \"HTML\" };\n  if (replyMarkup) payload.reply_markup = replyMarkup;\n  try {\n    await this.helpers.httpRequest({\n      method: \"POST\",\n      url: `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,\n      headers: { \"Content-Type\": \"application/json\" },\n      body: payload,\n      json: true\n    });\n  } catch(e) {}\n};\n\n// Parse Gemini Response\nlet rawText = input?.candidates?.[0]?.content?.parts?.[0]?.text || \"{}\";\nrawText = fixTurkishMojibake(rawText);\nlet parsed = {};\ntry {\n  parsed = JSON.parse(rawText.replace(/```json/g, \"\").replace(/```/g, \"\").trim());\n} catch(e) {\n  parsed = { isPossible: false, reason: \"Yapay zeka yanıtı çözümlenemedi. Lütfen tekrar deneyin.\" };\n}\n\n// 1. If not possible to cook a meal\nif (parsed.isPossible === false || !parsed.recipes || parsed.recipes.length === 0) {\n  const reason = fixTurkishMojibake(parsed.reason || \"Mevcut malzemelerle doyurucu veya tüketilebilir bir yemek yapılamıyor.\");\n  await sendTg(chatId, `❌ <b>Yetersiz Malzeme Uyarısı</b>\\n━━━━━━━━━━━━━━━━━━━━\\n${reason}\\n\\n💡 <b>Şefin Önerisi:</b>\\nLütfen elinize en az bir ana besin maddesi (örneğin: yumurta, sebze, tavuk, et, bakliyat veya un) ekleyip malzeme listenizi yeniden yazın veya daha net bir buzdolabı fotoğrafı çekin! 🍳`);\n  return [];\n}\n\nconst recipes = (parsed.recipes || []).slice(0, 3).map(r => ({\n  title: fixTurkishMojibake(r.title || \"\"),\n  time: fixTurkishMojibake(r.time || \"25 dk\"),\n  difficulty: fixTurkishMojibake(r.difficulty || \"Kolay\"),\n  portions: fixTurkishMojibake(r.portions || \"2-3 Kişilik\"),\n  calories: fixTurkishMojibake(r.calories || \"\"),\n  ingredientsUsed: (r.ingredientsUsed || []).map(fixTurkishMojibake),\n  steps: (r.steps || []).map(fixTurkishMojibake),\n  chefTip: fixTurkishMojibake(r.chefTip || \"\")\n}));\n\n// 2. Format Telegram Message\nlet tgMsg = `🍽️ <b>GÜNÜN MENÜSÜ & 3 ÖZEL TARİF</b>\\n`;\ntgMsg += `🧺 <b>Malzemeler:</b> ${ingredients}\\n`;\ntgMsg += `🧂 <b>Kiler:</b> ${hasPantry ? \"Temel kiler malzemeleri dahil\" : \"Sadece belirtilen / fotoğraftaki malzemeler\"}\\n`;\ntgMsg += `━━━━━━━━━━━━━━━━━━━━\\n\\n`;\n\nrecipes.forEach((r, idx) => {\n  const icons = [\"1️⃣\", \"2️⃣\", \"3️⃣\"];\n  const cleanTitle = (r.title || \"\")\n    .replace(/ı/g, 'I')\n    .replace(/i/g, 'İ')\n    .toLocaleUpperCase(\"tr-TR\");\n  tgMsg += `${icons[idx]} <b>${cleanTitle}</b>\\n`;\n  tgMsg += `⏱️ <b>Süre:</b> ${r.time}  |  📊 <b>Zorluk:</b> ${r.difficulty}  |  👥 <b>Porsiyon:</b> ${r.portions || \"2-3 Kişilik\"}\\n\\n`;\n  \n  tgMsg += `🥗 <b>Kullanılan Malzemeler:</b>\\n`;\n  (r.ingredientsUsed || []).forEach(ing => {\n    tgMsg += `• ${ing}\\n`;\n  });\n  \n  tgMsg += `\\n👩‍🍳 <b>Nasıl Yapılır?</b>\\n`;\n  (r.steps || []).forEach((s, sIdx) => {\n    const cleanStep = s.replace(/^[0-9]+[.\\s-]+/, \"\");\n    tgMsg += `<b>${sIdx + 1}.</b> ${cleanStep}\\n`;\n  });\n  \n  if (r.chefTip) {\n    tgMsg += `\\n💡 <b>Şefin Püf Noktası:</b> <i>${r.chefTip}</i>\\n`;\n  }\n  tgMsg += `\\n────────────────────\\n\\n`;\n});\n\ntgMsg += `👉 <i>Tariflerinizin çıktısını alabilmeniz için yukarıda özel <b>PDF Tarif Kartı</b> da hazırlanmıştır!</i>`;\n\nreturn [{\n  json: {\n    chatId,\n    ingredients,\n    hasPantry,\n    recipes,\n    telegramMessage: tgMsg\n  }\n}];"
+      }
+    },
+    {
+      "id": "819c0385-4796-49a3-9b78-51009fb8df5f",
+      "name": "Generate Vector PDF Recipe Book",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1880,
+        440
+      ],
+      "parameters": {
+        "jsCode": "\nfunction fixTurkishMojibake(str) {\n  if (!str) return \"\";\n  return String(str)\n    // GBK/CP936 Mojibake mapping (common in some LLM tokenizers when generating Turkish in JSON mode)\n    .replace(/脺/g, 'Ü').replace(/脰/g, 'Ö').replace(/脟/g, 'Ç').replace(/艧/g, 'ş').replace(/艦/g, 'Ş')\n    .replace(/莽/g, 'ç').replace(/臒/g, 'ğ').replace(/臑/g, 'Ğ').replace(/眉/g, 'ü').replace(/枚/g, 'ö')\n    .replace(/谋/g, 'ı').replace(/陌/g, 'İ')\n    // Latin-1 / Windows-1252 Mojibake mapping\n    .replace(/Ã¼/g, 'ü').replace(/Ãœ/g, 'Ü').replace(/Ã¶/g, 'ö').replace(/Ã–/g, 'Ö')\n    .replace(/Ã§/g, 'ç').replace(/Ã‡/g, 'Ç').replace(/ÄŸ/g, 'ğ').replace(/Äž/g, 'Ğ')\n    .replace(/Ä±/g, 'ı').replace(/Ä°/g, 'İ').replace(/ÅŸ/g, 'ş').replace(/Åž/g, 'Ş');\n}\nconst input = $input.first()?.json || {};\nconst recipes = input.recipes || [];\nconst ingredients = fixTurkishMojibake(input.ingredients || \"\");\nconst hasPantry = input.hasPantry !== false;\nconst chatId = input.chatId;\n\nfunction sanitizeForPdf(str) {\n  if (!str) return '';\n  return fixTurkishMojibake(String(str))\n    .replace(/[Öö]/g, m => m === 'Ö' ? 'O' : 'o')\n    .replace(/[Üü]/g, m => m === 'Ü' ? 'U' : 'u')\n    .replace(/[Çç]/g, m => m === 'Ç' ? 'C' : 'c')\n    .replace(/[Ğğ]/g, m => m === 'Ğ' ? 'G' : 'g')\n    .replace(/[Şş]/g, m => m === 'Ş' ? 'S' : 's')\n    .replace(/[İı]/g, m => m === 'İ' ? 'I' : 'i')\n    .replace(/[éèêë]/g, 'e')\n    .replace(/[áàâ]/g, 'a')\n    .replace(/[“”]/g, '\"')\n    .replace(/[‘’]/g, \"'\")\n    .replace(/[—–]/g, '-')\n    .replace(/[•]/g, '*')\n    .replace(/[^ -~]/g, ' ')\n    .replace(/\\\\/g, '\\\\\\\\')\n    .replace(/\\(/g, '\\\\(')\n    .replace(/\\)/g, '\\\\)');\n}\n\nfunction wrapText(str, maxChars = 70) {\n  const words = String(str || '').replace(/\\s+/g, ' ').trim().split(' ');\n  const lines = [];\n  let current = '';\n  for (const w of words) {\n    if (!w) continue;\n    if ((current + ' ' + w).trim().length <= maxChars) {\n      current = (current + ' ' + w).trim();\n    } else {\n      if (current) lines.push(current);\n      current = w;\n    }\n  }\n  if (current) lines.push(current);\n  return lines;\n}\n\nfunction generateMenuPdf(recipes, ingredients, hasPantry) {\n  const objects = [];\n  function addObject(content) {\n    objects.push(content);\n    return objects.length;\n  }\n\n  // 1: Catalog, 2: Pages, 3: Page 1 (Recipe 1 & 2), 4: Page 2 (Recipe 3 & Notes)\n  addObject('<< /Type /Catalog /Pages 2 0 R >>');\n  addObject('<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>');\n  addObject('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Contents 5 0 R /Resources << /Font << /F1 7 0 R /F2 8 0 R /F3 9 0 R >> >> >>');\n  addObject('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Contents 6 0 R /Resources << /Font << /F1 7 0 R /F2 8 0 R /F3 9 0 R >> >> >>');\n\n  function createPageRenderer() {\n    let stream = '';\n    return {\n      rect: (x, y, w, h, r, g, b) => { stream += `${r} ${g} ${b} rg ${x.toFixed(2)} ${y.toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)} re f\\n`; },\n      strokeRect: (x, y, w, h, r, g, b, lw = 1) => { stream += `${lw} w ${r} ${g} ${b} RG ${x.toFixed(2)} ${y.toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)} re S\\n`; },\n      line: (x1, y1, x2, y2, r, g, b, lw = 1) => { stream += `${lw} w ${r} ${g} ${b} RG ${x1.toFixed(2)} ${y1.toFixed(2)} m ${x2.toFixed(2)} ${y2.toFixed(2)} l S\\n`; },\n      text: (font, size, x, y, str, r = 0, g = 0, b = 0) => {\n        const clean = sanitizeForPdf(str);\n        stream += `BT /${font} ${size} Tf ${r} ${g} ${b} rg 1 0 0 1 ${x.toFixed(2)} ${y.toFixed(2)} Tm (${clean}) Tj ET\\n`;\n      },\n      getStream: () => stream\n    };\n  }\n\n  // PAGE 1: Header + Recipe 1 + Recipe 2\n  const p1 = createPageRenderer();\n  p1.rect(0, 745, 595.28, 97, 0.08, 0.28, 0.22);\n  p1.rect(0, 740, 595.28, 5, 0.85, 0.65, 0.20);\n\n  p1.text('F2', 20, 40, 804, 'AKILLI MUTFAK SEFI', 1, 1, 1);\n  p1.text('F2', 10, 40, 786, 'GUNUN MENUSU VE OZEL TARIF KARTLARI', 0.85, 0.65, 0.20);\n  p1.text('F1', 8.5, 40, 768, `Malzemeler: ${ingredients.slice(0, 60)}  |  Kiler: ${hasPantry ? 'Var' : 'Sadece Girilenler'}`, 0.85, 0.95, 0.88);\n\n  function renderRecipeCard(p, r, topY, height, index) {\n    if (!r) return;\n    const cardY = topY - height;\n    \n    p.rect(40, cardY, 515.28, height, 0.98, 0.98, 0.98);\n    p.strokeRect(40, cardY, 515.28, height, 0.88, 0.88, 0.88, 1);\n    \n    p.rect(40, topY - 28, 515.28, 28, 0.12, 0.35, 0.28);\n    const titleUp = sanitizeForPdf(`${index}. ${(r.title || \"\").replace(/ı/g, 'I').replace(/i/g, 'İ').toLocaleUpperCase(\"tr-TR\")}`);\n    p.text('F2', 12, 52, topY - 19, titleUp, 1, 1, 1);\n    p.text('F1', 9, 390, topY - 18, `Sure: ${r.time}  |  Zorluk: ${r.difficulty}  |  ${r.portions || '2-3 Kisilik'}`, 0.88, 0.95, 0.90);\n\n    let curY = topY - 45;\n    p.text('F2', 9.5, 52, curY, 'MALZEMELER:', 0.15, 0.40, 0.30);\n    curY -= 14;\n    \n    (r.ingredientsUsed || []).slice(0, 6).forEach(ing => {\n      wrapText(ing, 24).forEach(l => {\n        p.text('F1', 8.5, 55, curY, `* ${l}`, 0.25, 0.25, 0.25);\n        curY -= 11;\n      });\n    });\n\n    let stepY = topY - 45;\n    p.text('F2', 9.5, 235, stepY, 'HAZIRLANISI & PISIRME ADIMLARI:', 0.15, 0.40, 0.30);\n    stepY -= 14;\n\n    (r.steps || []).slice(0, 5).forEach((step, sIdx) => {\n      const clean = step.replace(/^[0-9]+[.\\s-]+/, '');\n      const wrapped = wrapText(`${sIdx + 1}. ${clean}`, 46);\n      wrapped.forEach((line, lIdx) => {\n        p.text('F1', 8.5, 238, stepY, line, 0.20, 0.20, 0.20);\n        stepY -= 11;\n      });\n      stepY -= 2;\n    });\n\n    if (r.chefTip) {\n      stepY -= 2;\n      p.rect(235, stepY - 18, 305, 20, 0.93, 0.96, 0.94);\n      p.strokeRect(235, stepY - 18, 305, 20, 0.65, 0.82, 0.72, 0.8);\n      p.text('F3', 8, 242, stepY - 6, `Sefin Puf Noktasi: ${wrapText(r.chefTip, 45)[0] || ''}`, 0.10, 0.35, 0.25);\n    }\n  }\n\n  renderRecipeCard(p1, recipes[0], 715, 320, 1);\n  renderRecipeCard(p1, recipes[1], 375, 320, 2);\n\n  p1.line(40, 38, 555.28, 38, 0.85, 0.85, 0.85, 0.8);\n  p1.text('F1', 8, 40, 26, 'Akilli Mutfak Sefi - Gunun Menusu ve Pratik Tarif Kartlari', 0.55, 0.55, 0.55);\n  p1.text('F1', 8, 500, 26, 'Sayfa 1 / 2', 0.55, 0.55, 0.55);\n\n  // PAGE 2: Recipe 3 + Notes\n  const p2 = createPageRenderer();\n  p2.rect(0, 775, 595.28, 67, 0.08, 0.28, 0.22);\n  p2.rect(0, 770, 595.28, 5, 0.85, 0.65, 0.20);\n  p2.text('F2', 16, 40, 800, 'AKILLI MUTFAK SEFI', 1, 1, 1);\n  p2.text('F1', 9, 40, 785, '3. Ozel Tarif & Sefin Mutfak Notlari', 0.85, 0.95, 0.88);\n\n  renderRecipeCard(p2, recipes[2], 745, 330, 3);\n\n  const boxTop = 390;\n  p2.rect(40, boxTop - 340, 515.28, 340, 0.97, 0.98, 0.97);\n  p2.strokeRect(40, boxTop - 340, 515.28, 340, 0.80, 0.85, 0.82, 1);\n\n  p2.rect(40, boxTop - 28, 515.28, 28, 0.15, 0.40, 0.30);\n  p2.text('F2', 11, 52, boxTop - 19, 'SEFIN MUTFAK NOTLARI & SIFIR ATIK REHBERI', 1, 1, 1);\n\n  let noteY = boxTop - 48;\n  const tips = [\n    { title: 'Tazelik & Saklama:', desc: 'Kalan yemeklerinizi oda sicakligina geldikten sonra hava almayan kaplarda buzdolabinda 2-3 gun taze saklayabilirsiniz.' },\n    { title: 'Sifir Atik & Donusturme:', desc: 'Artan sebze koklerini veya tavuk kemiklerini atmayip buzluga kaldirin; ileride lezzetli bir bulyon corba suyu yapabilirsiniz.' },\n    { title: 'Baharat Dengesi:', desc: 'Baharatlari pisirme asamasinin ortasinda eklemek lezzetin yagin icine islemesini saglar. Taze otlari ise servisten hemen once ekleyin.' },\n    { title: 'Pratik Hazirlik (Mise en place):', desc: 'Pismeye baslamadan once tum malzemeleri dograyip sirayla tezgaha dizmek pisirme suresini yariya indirir ve yanmayi onler.' },\n    { title: 'Afiyet Olsun:', desc: 'Yemek yapmak bir sanattir. Elinizdeki malzemelerle harikalar yarattiniz! Bon appetit!' }\n  ];\n\n  tips.forEach(t => {\n    p2.text('F2', 9.5, 55, noteY, t.title, 0.12, 0.35, 0.25);\n    noteY -= 13;\n    wrapText(t.desc, 76).forEach(l => {\n      p2.text('F1', 8.5, 58, noteY, l, 0.25, 0.25, 0.25);\n      noteY -= 11;\n    });\n    noteY -= 6;\n  });\n\n  p2.line(40, 38, 555.28, 38, 0.85, 0.85, 0.85, 0.8);\n  p2.text('F1', 8, 40, 26, 'Akilli Mutfak Sefi - Gunun Menusu ve Pratik Tarif Kartlari', 0.55, 0.55, 0.55);\n  p2.text('F1', 8, 500, 26, 'Sayfa 2 / 2', 0.55, 0.55, 0.55);\n\n  const s1 = p1.getStream();\n  const s2 = p2.getStream();\n  addObject(`<< /Length ${Buffer.byteLength(s1, 'binary')} >>\\nstream\\n${s1}endstream`);\n  addObject(`<< /Length ${Buffer.byteLength(s2, 'binary')} >>\\nstream\\n${s2}endstream`);\n\n  addObject('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');\n  addObject('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>');\n  addObject('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Oblique >>');\n\n  let pdf = '%PDF-1.4\\n';\n  const offsets = [];\n  let curOffset = Buffer.byteLength(pdf, 'binary');\n\n  for (let i = 0; i < objects.length; i++) {\n    offsets.push(curOffset);\n    const objStr = `${i + 1} 0 obj\\n${objects[i]}\\nendobj\\n`;\n    pdf += objStr;\n    curOffset += Buffer.byteLength(objStr, 'binary');\n  }\n\n  const xrefStart = curOffset;\n  pdf += `xref\\n0 ${objects.length + 1}\\n0000000000 65535 f \\n`;\n  for (let i = 0; i < objects.length; i++) {\n    pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n \\n`;\n  }\n\n  pdf += `trailer\\n<< /Size ${objects.length + 1} /Root 1 0 R >>\\nstartxref\\n${xrefStart}\\n%%EOF\\n`;\n  return Buffer.from(pdf, 'binary');\n}\n\nconst pdfBuffer = generateMenuPdf(recipes, ingredients, hasPantry);\n\nreturn [{\n  json: {\n    chatId,\n    ingredients,\n    telegramMessage: input.telegramMessage\n  },\n  binary: {\n    data: {\n      data: pdfBuffer.toString(\"base64\"),\n      mimeType: \"application/pdf\",\n      fileName: \"Gunun_Menusu_ve_Tarif_Kartlari.pdf\"\n    }\n  }\n}];"
+      }
+    },
+    {
+      "id": "90e384be-f3a1-468a-b483-3dd81668217d",
+      "name": "Send PDF Document to Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2160,
+        440
+      ],
+      "parameters": {
+        "operation": "sendDocument",
+        "chatId": "={{ $json.chatId }}",
+        "binaryData": true,
+        "binaryPropertyName": "data",
+        "caption": "📋 <b>Günün Menüsü & Tarif Kartları (PDF)</b>\nElinizdeki malzemelerle hazırlanan 3 özel tarifin çıktısını alabileceğiniz tarif kartı belgeniz hazırdır.",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "mealPlanGeneratorBot",
+          "name": "Meal Plan Generator Bot"
+        }
+      }
+    },
+    {
+      "id": "cc269e65-840e-4148-9c34-4c5a7da4da74",
+      "name": "Send Recipes Message with Buttons",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2440,
+        440
+      ],
+      "parameters": {
+        "operation": "sendMessage",
+        "chatId": "={{ $('Generate Vector PDF Recipe Book').first().json.chatId }}",
+        "text": "={{ $('Generate Vector PDF Recipe Book').first().json.telegramMessage }}",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        },
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "✅ Tarifler Harika! (Afiyet Olsun)",
+                    "additionalFields": {
+                      "callback_data": "p14_accept"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "🔄 3 Farklı Alternatif Öner",
+                    "additionalFields": {
+                      "callback_data": "p14_more"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "mealPlanGeneratorBot",
+          "name": "Meal Plan Generator Bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger (Chat & Buttons)": {
+      "main": [
+        [
+          {
+            "node": "Conversation & State Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conversation & State Router": {
+      "main": [
+        [
+          {
+            "node": "Is Fridge Photo?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Fridge Photo?": {
+      "main": [
+        [
+          {
+            "node": "Gemini 3.1: Detect Fridge Ingredients",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Gemini Meal Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini 3.1: Detect Fridge Ingredients": {
+      "main": [
+        [
+          {
+            "node": "Send Detected Ingredients with Pantry Buttons",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Gemini Meal Prompt": {
+      "main": [
+        [
+          {
+            "node": "Gemini 3.1: Generate Meal Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini 3.1: Generate Meal Plan": {
+      "main": [
+        [
+          {
+            "node": "Parse Recipes & Check Feasibility",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Recipes & Check Feasibility": {
+      "main": [
+        [
+          {
+            "node": "Generate Vector PDF Recipe Book",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Vector PDF Recipe Book": {
+      "main": [
+        [
+          {
+            "node": "Send PDF Document to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send PDF Document to Telegram": {
+      "main": [
+        [
+          {
+            "node": "Send Recipes Message with Buttons",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Istanbul",
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  }
+}

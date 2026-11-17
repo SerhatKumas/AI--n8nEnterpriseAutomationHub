@@ -1,0 +1,23 @@
+{
+  "event": "messages.upsert",
+  "instance": "escapetowns",
+  "data": {
+    "key": {
+      "remoteJid": "905551234567@s.whatsapp.net",
+      "fromMe": false,
+      "id": "3EB0A1B2C3D4E5F67890"
+    },
+    "pushName": "Ahmet Yılmaz",
+    "message": {
+      "conversation": "Merhaba, escape room etkinlikleriniz hakkında bilgi alabilir miyim?"
+    },
+    "messageType": "conversation",
+    "messageTimestamp": 1729345200,
+    "owner": "escapetowns",
+    "source": "android"
+  },
+  "destination": "https://n8n.codewaft.com/webhook/whatsapp-evolution",
+  "date_time": "2026-10-19T16:15:00.000Z",
+  "sender": "905551234567@s.whatsapp.net",
+  "server_url": "http://localhost:8080"
+}

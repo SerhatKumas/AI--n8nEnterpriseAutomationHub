@@ -1,0 +1,13 @@
+📞 <b>YENİ SESLİ GÖRÜŞME RAPORU</b>
+━━━━━━━━━━━━━━━━━━━━━
+👤 <b>Arayan:</b> {{ $json.caller_name }} ({{ $json.caller_phone }})
+⏱ <b>Süre:</b> {{ Math.floor($json.call_duration_seconds / 60) }} dk {{ $json.call_duration_seconds % 60 }} sn
+🎯 <b>Lead Durumu:</b> {{ $json.lead_tier }}
+🧠 <b>Duygu:</b> {{ $json.call_sentiment }}
+📅 <b>Randevu:</b> {{ $json.appointment_booked ? '✅ ' + $json.appointment_details : '❌ Alınmadı' }}
+
+📝 <b>Özet:</b>
+{{ $json.summary_bullet_points.map(p => '• ' + p).join('\n') }}
+
+📌 <b>Aksiyon:</b>
+{{ $json.action_items.map(a => '👉 ' + a).join('\n') }}

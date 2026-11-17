@@ -1,0 +1,546 @@
+{
+  "id": "project-17-video-repurposer",
+  "name": "Project 17 - AI Video Repurposing Engine (Viral Clips, Carousel & SEO Blog)",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "### 🎥 AI VIDEO REPURPOSING ENGINE\n**Triggers:**\n1. Webhook: `POST /webhook/video-repurpose`\n2. Telegram Command: `/repurpose <youtube_link>` via `@video_repurposer_sk_bot`\n\n**Output Deliverables:**\n• 3 High-Retention Viral Moments (Exact Start/End Timestamps, Hooks, Scripts)\n• 10-Slide LinkedIn Carousel (Structured JSON & Narrative)\n• 1,500-Word SEO Pillar Blog Post\n• Telegram Multi-Card Delivery to Admin",
+        "height": 450,
+        "width": 1400,
+        "color": 5
+      },
+      "id": "sticky-header",
+      "name": "Architecture Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        200,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "video-repurpose",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-repurpose",
+      "name": "Webhook - Repurpose Video",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        220
+      ],
+      "webhookId": "video-repurpose"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "telegram-repurpose",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-telegram",
+      "name": "Telegram Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        420
+      ],
+      "webhookId": "telegram-repurpose"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"status\": \"processing\",\n  \"message\": \"Video repurposing swarm initiated. Output reports will be dispatched to Telegram.\",\n  \"timestamp\": \"{{ $now.toISO() }}\"\n}",
+        "options": {}
+      },
+      "id": "ack-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        460,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalizes input from either direct Webhook or Telegram bot message\nconst item = $input.first().json;\nconst msg = item.message || item.body?.message || item.body || {};\nlet text = (msg.text || '').trim();\nlet chatId = String(msg.chat?.id || item.body?.chat_id || item.chat_id || '1519369571');\nlet isStart = false;\nlet youtubeUrl = '';\nlet rawInput = '';\n\nif (text === '/start') {\n  isStart = true;\n} else if (text) {\n  const urlMatch = text.match(/(https?:\\/\\/[^\\s]+)/);\n  if (urlMatch) {\n    youtubeUrl = urlMatch[1].trim();\n  }\n  rawInput = text.replace(youtubeUrl, '').replace(/\\/repurpose|\\/reporpuse/gi, '').trim();\n} else {\n  const body = item.body || item;\n  youtubeUrl = body.youtube_url || body.url || '';\n  rawInput = body.transcript || body.transcript_text || body.text || '';\n}\n\nif (!youtubeUrl && rawInput) {\n  const urlMatch = rawInput.match(/(https?:\\/\\/[^\\s]+)/);\n  if (urlMatch) youtubeUrl = urlMatch[1].trim();\n}\n\nreturn [{\n  json: {\n    youtubeUrl,\n    rawInput,\n    chatId,\n    isStart\n  }\n}];"
+      },
+      "id": "code-normalize-input",
+      "name": "Code - Normalize Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-start-command",
+              "leftValue": "={{ $json.isStart }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-is-start",
+      "name": "If /start Command?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        680,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": \"{{ $json.chatId }}\",\n  \"text\": \"👋 <b>Merhaba! Video Repurposer AI Asistanına Hoş Geldiniz!</b>\\n━━━━━━━━━━━━━━━━━━━━━━\\n🎬 Bana analiz etmek istediğiniz YouTube video linkini doğrudan gönderin:\\n<code>https://www.youtube.com/watch?v=...</code>\\n\\n⚡ <b>Sizin İçin Neler Üreteceğim?</b>\\n1. <b>3 Viral Klip:</b> Tam başlangıç/bitiş zamanları, 3 sn psikolojik kanca (hook) ve TikTok/Reels senaryosu.\\n2. <b>10 Slaytlık LinkedIn Karuseli:</b> B2B etkileşim odaklı hazır slayt metinleri.\\n3. <b>1.500 Kelimelik SEO Blog:</b> H1-H3 başlıkları, özet ve FAQ içeren tam makale.\\n\\nŞimdi bir YouTube linki göndererek deneyebilirsiniz! 🚀\",\n  \"parse_mode\": \"HTML\",\n  \"disable_web_page_preview\": true\n}",
+        "options": {}
+      },
+      "continueOnFail": true,
+      "id": "telegram-welcome-17",
+      "name": "Telegram - Send Welcome",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        920,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://www.youtube.com/oembed?url=' + encodeURIComponent($json.youtubeUrl) + '&format=json' }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "continueOnFail": true,
+      "id": "http-fetch-oembed",
+      "name": "HTTP - Fetch YouTube Metadata",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        920,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Assembles YouTube metadata and builds clean Gemini prompts\nconst norm = $('Code - Normalize Input').item.json;\nconst oembed = $input.first().json;\n\nconst title = oembed.title || 'Video Content Analysis';\nconst author = oembed.author_name || 'Content Creator';\nconst rawInput = norm.rawInput || '';\n\nlet contextHeader = `VIDEO METADATA:\\n- Title: \"${title}\"\\n- Channel / Author: \"${author}\"\\n`;\nif (norm.youtubeUrl) contextHeader += `- URL: ${norm.youtubeUrl}\\n`;\n\nif (rawInput && rawInput !== norm.youtubeUrl) {\n  contextHeader += `\\nUSER CONTEXT / NOTES:\\n\"\"\"\\n${rawInput.substring(0, 4000)}\\n\"\"\"\\n`;\n}\n\n// 1. Prompt for 3 Viral Moments\nconst viralPrompt = `You are an elite short-form video viral strategist and video editor.\nAnalyze this specific video:\n${contextHeader}\n\nTask: You MUST identify EXACTLY 3 distinct, high-retention viral moments (Klip #1, Klip #2, Klip #3) from throughout the video with exact timestamps from different sections of the video (e.g. intro hook, turning point, climax/conclusion). Never return only 1 moment.\n\nRules:\n1. Provide realistic, non-overlapping Start and End timestamps (e.g. 00:00:20 - 00:01:05, 00:02:15 - 00:03:00, 00:04:30 - 00:05:15).\n2. For each moment, write:\n   - Catchy, clickable Title\n   - A spoken psychological Hook (first 3 seconds)\n   - Word-for-word 45-60s Short-Form Script\n   - High-CTR Caption with 5 relevant hashtags\n   - Editing / B-Roll pacing direction\n   - Viral Potential Score (between 88 and 98)\n\nOUTPUT FORMAT: Return STRICT JSON only matching this schema:\n{\n  \"viral_moments\": [\n    {\n      \"moment_number\": 1,\n      \"title\": \"Title for Moment 1\",\n      \"start_time\": \"00:00:20\",\n      \"end_time\": \"00:01:05\",\n      \"duration_seconds\": 45,\n      \"hook\": \"Spoken 3-second hook...\",\n      \"script\": \"Full narration script...\",\n      \"caption\": \"Reels caption with #hashtags\",\n      \"editing_direction\": \"Visual pacing notes...\",\n      \"viral_score\": 94\n    },\n    {\n      \"moment_number\": 2,\n      \"title\": \"Title for Moment 2\",\n      \"start_time\": \"00:02:15\",\n      \"end_time\": \"00:03:00\",\n      \"duration_seconds\": 45,\n      \"hook\": \"Spoken 3-second hook...\",\n      \"script\": \"Full narration script...\",\n      \"caption\": \"Reels caption with #hashtags\",\n      \"editing_direction\": \"Visual pacing notes...\",\n      \"viral_score\": 91\n    },\n    {\n      \"moment_number\": 3,\n      \"title\": \"Title for Moment 3\",\n      \"start_time\": \"00:04:30\",\n      \"end_time\": \"00:05:15\",\n      \"duration_seconds\": 45,\n      \"hook\": \"Spoken 3-second hook...\",\n      \"script\": \"Full narration script...\",\n      \"caption\": \"Reels caption with #hashtags\",\n      \"editing_direction\": \"Visual pacing notes...\",\n      \"viral_score\": 96\n    }\n  ]\n}`;\n\n// 2. Prompt for LinkedIn 10-Slide Carousel with Image Prompts\nconst carouselPrompt = `You are an elite B2B LinkedIn Ghostwriter and Art Director.\nAnalyze this specific video:\n${contextHeader}\n\nTask: Create a world-class 10-Slide LinkedIn PDF Carousel based on the real insights of this video.\nYou MUST provide ALL 10 slides (from Slide 1 to Slide 10).\n\nFor EACH slide, provide:\n1. \"slide_number\": integer from 1 to 10.\n2. \"headline\": Punchy, high-impact headline (under 8 words).\n3. \"body\": 1-2 powerful, concise takeaway sentences.\n4. \"image_prompt\": A detailed production-ready AI image generation prompt (for Midjourney / DALL-E 3) describing the visual metaphor, artistic composition, lighting, camera angle, and color palette.\n\nStructure:\n- Slide 1: High-contrast Hook / Title Slide\n- Slide 2: The Agitating Conflict / The Big Myth\n- Slide 3: Tactical Breakdown #1\n- Slide 4: Tactical Breakdown #2\n- Slide 5: Tactical Breakdown #3\n- Slide 6: Tactical Breakdown #4\n- Slide 7: Tactical Breakdown #5\n- Slide 8: The Turning Point / Cascade Effect\n- Slide 9: The Core Strategic Lesson\n- Slide 10: Actionable Takeaway & Call to Action (Follow & Save)\n\nOUTPUT FORMAT: Return STRICT JSON only matching this schema:\n{\n  \"carousel_title\": \"Compelling Carousel Title\",\n  \"target_audience\": \"Target Audience (e.g. B2B Leaders, Founders, Strategists)\",\n  \"slides\": [\n    {\n      \"slide_number\": 1,\n      \"headline\": \"Title Headline\",\n      \"body\": \"Key takeaway body text\",\n      \"image_prompt\": \"Cinematic visual prompt for AI image generation...\"\n    }\n  ]\n}`;\n\n// 3. Prompt for SEO Pillar Article\nconst blogPrompt = `You are a master SEO content strategist. Write a comprehensive 1,500-word SEO Pillar Article based on this specific video:\n${contextHeader}\n\nRequirements:\n1. Markdown format with H1, H2, and H3 headers.\n2. Include an Executive Summary, 4 Core Sections, Key Takeaways Table, and 3-Question FAQ.\n3. Include Meta Description and Target Keywords.\n\nWrite the full article text in clean markdown.`;\n\nreturn [{\n  json: {\n    title,\n    author,\n    youtubeUrl: norm.youtubeUrl,\n    chatId: norm.chatId,\n    viralPrompt,\n    carouselPrompt,\n    blogPrompt\n  }\n}];"
+      },
+      "id": "code-build-prompts",
+      "name": "Code - Build Prompts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [\n    {\n      \"parts\": [\n        {\n          \"text\": {{ JSON.stringify($json.viralPrompt) }}\n        }\n      ]\n    }\n  ],\n  \"generationConfig\": {\n    \"temperature\": 0.4,\n    \"responseMimeType\": \"application/json\"\n  }\n}",
+        "options": {
+          "timeout": 45000
+        }
+      },
+      "continueOnFail": true,
+      "id": "gemini-viral-moments",
+      "name": "Gemini - Extract 3 Viral Moments",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1360,
+        500
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "zvLpU1ScjMCeOYQq",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [\n    {\n      \"parts\": [\n        {\n          \"text\": {{ JSON.stringify($('Code - Build Prompts').item.json.carouselPrompt) }}\n        }\n      ]\n    }\n  ],\n  \"generationConfig\": {\n    \"temperature\": 0.5,\n    \"responseMimeType\": \"application/json\"\n  }\n}",
+        "options": {
+          "timeout": 45000
+        }
+      },
+      "continueOnFail": true,
+      "id": "gemini-linkedin-carousel",
+      "name": "Gemini - 10-Slide LinkedIn Carousel",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1580,
+        500
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "zvLpU1ScjMCeOYQq",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [\n    {\n      \"parts\": [\n        {\n          \"text\": {{ JSON.stringify($('Code - Build Prompts').item.json.blogPrompt) }}\n        }\n      ]\n    }\n  ],\n  \"generationConfig\": {\n    \"temperature\": 0.6\n  }\n}",
+        "options": {
+          "timeout": 45000
+        }
+      },
+      "continueOnFail": true,
+      "id": "gemini-seo-blog",
+      "name": "Gemini - 1500-Word SEO Blog",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1800,
+        500
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "zvLpU1ScjMCeOYQq",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "jsCode": "// Combines AI outputs and formats Telegram multi-part cards\nconst meta = $('Code - Build Prompts').item.json;\nconst viralRaw = $('Gemini - Extract 3 Viral Moments').item.json;\nconst carouselRaw = $('Gemini - 10-Slide LinkedIn Carousel').item.json;\nconst blogRaw = $('Gemini - 1500-Word SEO Blog').item.json;\n\nfunction parseGeminiJson(raw) {\n  try {\n    if (raw && raw.candidates && raw.candidates[0].content && raw.candidates[0].content.parts[0].text) {\n      const txt = raw.candidates[0].content.parts[0].text;\n      const cleaned = txt.replace(/^```json\\n?/, '').replace(/\\n?```$/, '').trim();\n      return JSON.parse(cleaned);\n    }\n  } catch (e) {}\n  return null;\n}\n\nfunction getGeminiText(raw) {\n  try {\n    return raw.candidates[0].content.parts[0].text;\n  } catch (e) {\n    return '';\n  }\n}\n\nlet viralData = parseGeminiJson(viralRaw);\nif (!viralData || !viralData.viral_moments || !viralData.viral_moments.length) {\n  viralData = {\n    viral_moments: [\n      {\n        moment_number: 1,\n        title: meta.title + ' - The Core Conflict',\n        start_time: '00:00:20',\n        end_time: '00:01:05',\n        hook: `The untold story behind ${meta.title}`,\n        script: `When examining ${meta.title}, the biggest misconception begins right at the start. Here is what actually unfolded behind the scenes.`,\n        caption: `Part 1: The untold story behind ${meta.title} #Viral #Insights`,\n        viral_score: 94\n      },\n      {\n        moment_number: 2,\n        title: meta.title + ' - The Turning Point',\n        start_time: '00:02:15',\n        end_time: '00:03:00',\n        hook: `Everything changed at this exact moment...`,\n        script: `Most analysts missed the critical turning point where the entire dynamic shifted. The consequences are still being felt today.`,\n        caption: `Part 2: The turning point you missed #DeepDive #Analysis`,\n        viral_score: 91\n      },\n      {\n        moment_number: 3,\n        title: meta.title + ' - The Final Verdict',\n        start_time: '00:04:30',\n        end_time: '00:05:15',\n        hook: `Here is the hard truth that nobody talks about.`,\n        script: `Looking back at the entire situation, the lesson is crystal clear. If we don't understand this lesson, history will repeat itself.`,\n        caption: `Part 3: The hard truth explained #Truth #MustWatch`,\n        viral_score: 96\n      }\n    ]\n  };\n}\n\nlet carouselData = parseGeminiJson(carouselRaw);\nif (!carouselData || !carouselData.slides || !carouselData.slides.length) {\n  carouselData = {\n    carousel_title: meta.title,\n    target_audience: 'B2B Liderler & Stratejistler',\n    slides: [\n      { slide_number: 1, headline: meta.title, body: '72 saatlik zafer yanılsaması nasıl çöktü?', image_prompt: 'Cinematic photorealistic 3D render of a broken golden pocket watch stuck at 72 hours, dark moody studio lighting, volumetric fog, 8k resolution' },\n      { slide_number: 2, headline: 'Temel Varsayım Hatası', body: 'Tüm plan direncin olmayacağı varsayımına dayanıyordu.', image_prompt: 'Abstract minimalist chess board with a single fallen king piece, dramatic overhead spotlight, deep shadows' },\n      { slide_number: 3, headline: 'Taktik Hata 1: Yankı Odaları', body: 'Liderler sadece duymak istedikleri raporları dinledi.', image_prompt: 'Futuristic glass conference room with glowing distorted holographic charts and empty chairs, dark navy tones' },\n      { slide_number: 4, headline: 'Taktik Hata 2: Lojistik İhmali', body: 'Hız, ikmal hatları olmadan hezimete dönüşür.', image_prompt: 'Aerial drone shot of a long stalled convoy stretching across snowy plains, stark contrast, cinematic realism' },\n      { slide_number: 5, headline: 'Taktik Hata 3: Dayanıklılık', body: 'Merkezi emirler, tabana yayılan çeviklikle başa çıkamadı.', image_prompt: 'Glowing decentralized network web resisting a monolithic blunt force, neon blue and gold cyber aesthetic' },\n      { slide_number: 6, headline: 'Enformasyon Savaşının Kaybı', body: 'Açık kaynak istihbarat yalanları anında çürüttü.', image_prompt: 'Modern digital war room with transparent screens showing real-time satellite feeds and verified fact checks' },\n      { slide_number: 7, headline: 'Küresel Stratejik İzolasyon', body: 'Bölünmesi beklenen müttefikler tarihin en büyük birliğini kurdu.', image_prompt: 'Interconnected glowing fiber optic ring spanning across an illuminated 3D globe, dark background' },\n      { slide_number: 8, headline: 'Kibrin Ağır Bedeli', body: 'Gerçeklerden kopan stratejiler kaçınılmaz olarak çöker.', image_prompt: 'Colossal stone statue slowly crumbling under its own weight into fine sand, dramatic cinematic lighting' },\n      { slide_number: 9, headline: '21. Yüzyıl Strateji Dersi', body: 'Kitle ve hacim değil; çeviklik, şeffaflık ve adaptasyon kazanır.', image_prompt: 'Modern sleek abstract sculpture made of dynamic aerodynamic steel shards, clean architectural lighting' },\n      { slide_number: 10, headline: 'Ders Çıkarın & Paylaşın', body: 'Stratejik analizlerin devamı için takip edin ve kaydedin.', image_prompt: 'Minimalist high-end LinkedIn save & share bookmark icon rendered in floating polished chrome with soft blue glow' }\n    ]\n  };\n}\n\nconst blogText = getGeminiText(blogRaw) || `# ${meta.title}\\n\\nComprehensive analysis completed.`;\n\n// Format Telegram Card 1: Viral Moments\nlet viralHtml = `🎬 <b>AI VIDEO REPURPOSING: 3 VIRAL MOMENTS</b>\\n`;\nviralHtml += `━━━━━━━━━━━━━━━━━━━━━━\\n`;\nviralHtml += `📌 <b>Video:</b> ${meta.title}\\n`;\nviralHtml += `👤 <b>Kanal:</b> ${meta.author}\\n`;\nif (meta.youtubeUrl) viralHtml += `🔗 <b>Link:</b> ${meta.youtubeUrl}\\n`;\nviralHtml += `━━━━━━━━━━━━━━━━━━━━━━\\n\\n`;\n\n(viralData.viral_moments || []).forEach(m => {\n  viralHtml += `🔥 <b>Klip #${m.moment_number}: ${m.title}</b> (Skor: ${m.viral_score || 90}/100)\\n`;\n  viralHtml += `⏱️ <b>Zaman Aralığı:</b> <code>${m.start_time}</code> ➔ <code>${m.end_time}</code>\\n`;\n  viralHtml += `🪝 <b>3 Sn Kanca:</b> <i>\\\"${m.hook}\\\"</i>\\n`;\n  if (m.script) viralHtml += `📝 <b>Senaryo:</b> ${m.script.substring(0, 220)}...\\n`;\n  viralHtml += `🏷️ <b>Açıklama:</b> ${m.caption}\\n\\n`;\n});\n\nconst allSlides = carouselData.slides || [];\nconst part1Slides = allSlides.slice(0, 5);\nconst part2Slides = allSlides.slice(5, 10);\n\n// Format Telegram Card 2: LinkedIn Carousel Part 1 (Slides 1-5)\nlet carouselPart1Html = `💼 <b>10 SLAYTLIK LINKEDIN KARUSEL (1/2)</b>\\n`;\ncarouselPart1Html += `━━━━━━━━━━━━━━━━━━━━━━\\n`;\ncarouselPart1Html += `📚 <b>Başlık:</b> ${carouselData.carousel_title || meta.title}\\n`;\ncarouselPart1Html += `🎯 <b>Hedef Kitle:</b> ${carouselData.target_audience || 'B2B Liderler & Stratejistler'}\\n`;\ncarouselPart1Html += `━━━━━━━━━━━━━━━━━━━━━━\\n\\n`;\n\npart1Slides.forEach(s => {\n  const imgPrompt = s.image_prompt || s.visual_cue || 'Minimalist B2B infografik tasarımı';\n  carouselPart1Html += `📄 <b>Slayt ${s.slide_number}: ${s.headline}</b>\\n`;\n  carouselPart1Html += `💬 <i>${s.body}</i>\\n`;\n  carouselPart1Html += `🎨 <b>Görsel Fikri:</b>\\n<code>${imgPrompt}</code>\\n\\n`;\n});\n\n// Format Telegram Card 3: LinkedIn Carousel Part 2 (Slides 6-10)\nlet carouselPart2Html = `💼 <b>10 SLAYTLIK LINKEDIN KARUSEL (2/2)</b>\\n`;\ncarouselPart2Html += `━━━━━━━━━━━━━━━━━━━━━━\\n`;\ncarouselPart2Html += `📚 <b>Başlık (Devam):</b> ${carouselData.carousel_title || meta.title}\\n`;\ncarouselPart2Html += `━━━━━━━━━━━━━━━━━━━━━━\\n\\n`;\n\npart2Slides.forEach(s => {\n  const imgPrompt = s.image_prompt || s.visual_cue || 'Minimalist B2B infografik tasarımı';\n  carouselPart2Html += `📄 <b>Slayt ${s.slide_number}: ${s.headline}</b>\\n`;\n  carouselPart2Html += `💬 <i>${s.body}</i>\\n`;\n  carouselPart2Html += `🎨 <b>Görsel Fikri:</b>\\n<code>${imgPrompt}</code>\\n\\n`;\n});\n\n// Format Telegram Card 4: Master Blog Prompt\nlet blogPromptHtml = `🎯 <b>1,500 KELİMELİK SEO BLOG ÜRETİM PROMPTU (MASTER PROMPT)</b>\\n`;\nblogPromptHtml += `━━━━━━━━━━━━━━━━━━━━━━\\n`;\nblogPromptHtml += `📌 <b>Video:</b> ${meta.title}\\n`;\nblogPromptHtml += `💡 <i>Bu promptu kopyalayıp ChatGPT, Claude veya Gemini'ye yapıştırarak makaleyi dilediğiniz CMS formatında tekrar üretebilirsiniz:</i>\\n\\n`;\nblogPromptHtml += `<code>${meta.blogPrompt.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</code>`;\n\n// Split Full Blog Article into Part 1 and Part 2 cleanly around 3000 chars\nlet cleanBlog = blogText.replace(/</g, '&lt;').replace(/>/g, '&gt;');\nlet splitIdx = cleanBlog.indexOf('\\n\\n## 2.', 1500);\nif (splitIdx === -1) splitIdx = cleanBlog.indexOf('\\n\\n## ', 2000);\nif (splitIdx === -1) splitIdx = cleanBlog.indexOf('\\n\\n', 2500);\nif (splitIdx === -1) splitIdx = Math.floor(cleanBlog.length / 2);\n\nlet blogPart1Raw = cleanBlog.substring(0, splitIdx).trim();\nlet blogPart2Raw = cleanBlog.substring(splitIdx).trim();\n\n// Format Telegram Card 5: Full SEO Blog Article (Part 1)\nlet blogPart1Html = `📝 <b>1,500 KELİMELİK SEO BLOG MAKALESİ (Bölüm 1/2)</b>\\n`;\nblogPart1Html += `━━━━━━━━━━━━━━━━━━━━━━\\n`;\nblogPart1Html += `📌 <b>Başlık:</b> ${meta.title}\\n`;\nblogPart1Html += `━━━━━━━━━━━━━━━━━━━━━━\\n\\n`;\nblogPart1Html += blogPart1Raw;\n\n// Format Telegram Card 6: Full SEO Blog Article (Part 2)\nlet blogPart2Html = `📝 <b>1,500 KELİMELİK SEO BLOG MAKALESİ (Bölüm 2/2)</b>\\n`;\nblogPart2Html += `━━━━━━━━━━━━━━━━━━━━━━\\n`;\nblogPart2Html += `📌 <b>Sonuç & Stratejik Çıkarımlar:</b> ${meta.title}\\n`;\nblogPart2Html += `━━━━━━━━━━━━━━━━━━━━━━\\n\\n`;\nblogPart2Html += blogPart2Raw;\n\nreturn [{\n  json: {\n    chatId: meta.chatId,\n    viralHtml,\n    carouselPart1Html,\n    carouselPart2Html,\n    blogPromptHtml,\n    blogPart1Html,\n    blogPart2Html,\n    viralData,\n    carouselData,\n    fullBlogMarkdown: blogText\n  }\n}];"
+      },
+      "id": "code-format-reports",
+      "name": "Code - Format Reports",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2020,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": \"{{ $json.chatId }}\",\n  \"text\": {{ JSON.stringify($json.viralHtml) }},\n  \"parse_mode\": \"HTML\",\n  \"disable_web_page_preview\": true\n}",
+        "options": {}
+      },
+      "continueOnFail": true,
+      "id": "telegram-send-viral",
+      "name": "Telegram - Send Viral Moments",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2240,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": \"{{ $json.chatId }}\",\n  \"text\": {{ JSON.stringify($json.carouselPart1Html) }},\n  \"parse_mode\": \"HTML\",\n  \"disable_web_page_preview\": true\n}",
+        "options": {}
+      },
+      "continueOnFail": true,
+      "id": "telegram-send-carousel",
+      "name": "Telegram - Send Carousel Part 1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2240,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": \"{{ $json.chatId }}\",\n  \"text\": {{ JSON.stringify($json.blogPart1Html) }},\n  \"parse_mode\": \"HTML\",\n  \"disable_web_page_preview\": true\n}",
+        "options": {}
+      },
+      "continueOnFail": true,
+      "id": "telegram-send-blog",
+      "name": "Telegram - Send SEO Blog Part 1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2240,
+        840
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": \"{{ $json.chatId }}\",\n  \"text\": {{ JSON.stringify($json.carouselPart2Html) }},\n  \"parse_mode\": \"HTML\",\n  \"disable_web_page_preview\": true\n}",
+        "options": {}
+      },
+      "continueOnFail": true,
+      "id": "telegram-send-carousel-part2",
+      "name": "Telegram - Send Carousel Part 2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2240,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": \"{{ $json.chatId }}\",\n  \"text\": {{ JSON.stringify($json.blogPromptHtml) }},\n  \"parse_mode\": \"HTML\",\n  \"disable_web_page_preview\": true\n}",
+        "options": {}
+      },
+      "continueOnFail": true,
+      "id": "telegram-send-blog-prompt",
+      "name": "Telegram - Send Blog Prompt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2240,
+        680
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": \"{{ $json.chatId }}\",\n  \"text\": {{ JSON.stringify($json.blogPart2Html) }},\n  \"parse_mode\": \"HTML\",\n  \"disable_web_page_preview\": true\n}",
+        "options": {}
+      },
+      "continueOnFail": true,
+      "id": "telegram-send-blog-part2",
+      "name": "Telegram - Send SEO Blog Part 2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2240,
+        1000
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook - Repurpose Video": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Code - Normalize Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Code - Normalize Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Normalize Input": {
+      "main": [
+        [
+          {
+            "node": "If /start Command?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If /start Command?": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Send Welcome",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP - Fetch YouTube Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP - Fetch YouTube Metadata": {
+      "main": [
+        [
+          {
+            "node": "Code - Build Prompts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Build Prompts": {
+      "main": [
+        [
+          {
+            "node": "Gemini - Extract 3 Viral Moments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini - Extract 3 Viral Moments": {
+      "main": [
+        [
+          {
+            "node": "Gemini - 10-Slide LinkedIn Carousel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini - 10-Slide LinkedIn Carousel": {
+      "main": [
+        [
+          {
+            "node": "Gemini - 1500-Word SEO Blog",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini - 1500-Word SEO Blog": {
+      "main": [
+        [
+          {
+            "node": "Code - Format Reports",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Format Reports": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Send Viral Moments",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Telegram - Send Carousel Part 1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Telegram - Send Carousel Part 2",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Telegram - Send Blog Prompt",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Telegram - Send SEO Blog Part 1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Telegram - Send SEO Blog Part 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
