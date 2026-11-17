@@ -77,8 +77,8 @@ Every single workflow has been designed, sanitized, benchmarked, and verified in
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/your-username/n8n-automation-hub.git
-cd n8n-automation-hub
+git clone https://github.com/SerhatKumas/AI--n8nEnterpriseAutomationHub.git
+cd AI--n8nEnterpriseAutomationHub
 ```
 
 ### 2. Import into n8n
@@ -109,6 +109,24 @@ docker compose up -d
 ```
 
 Full deployment instructions, Oracle Cloud setup, firewall rules, and SSL configuration are detailed in [setup/DEPLOYMENT.md](setup/DEPLOYMENT.md).
+
+---
+
+## 👨‍💻 Author
+
+<div align="center">
+
+### **Serhat Kumaş**
+*Solutions Architect & AI Engineer*
+
+Specializing in multi-agent AI architectures, enterprise automation systems, scalable cloud platforms, and full-stack engineering.
+
+[![Website](https://img.shields.io/badge/Website-serhatkumas.github.io-6366f1?style=for-the-badge&logo=googlechrome&logoColor=white)](https://serhatkumas.github.io/)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/serhatkumas/)
+[![GitHub](https://img.shields.io/badge/GitHub-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/SerhatKumas)
+[![Email](https://img.shields.io/badge/Email-serhatkumas%40outlook.com-EA4335?style=for-the-badge&logo=gmail&logoColor=white)](mailto:serhatkumas@outlook.com)
+
+</div>
 
 ---
 
